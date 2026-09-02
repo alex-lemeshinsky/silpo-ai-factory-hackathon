@@ -120,7 +120,7 @@ Wave 10:                 T18
 - Consumes: none.
 - Produces: runnable Next.js app; commands `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm test:e2e`, `pnpm build`.
 
-- [ ] **Step 1: Create package and tool configuration**
+- [x] **Step 1: Create package and tool configuration**
 
 Use scripts:
 
@@ -145,7 +145,7 @@ pnpm add next react react-dom zod
 pnpm add -D typescript @types/node @types/react @types/react-dom eslint eslint-config-next tailwindcss @tailwindcss/postcss postcss vitest jsdom @vitejs/plugin-react @testing-library/dom @testing-library/react @testing-library/jest-dom @playwright/test
 ```
 
-- [ ] **Step 2: Write the failing landing-page test**
+- [x] **Step 2: Write the failing landing-page test**
 
 ```tsx
 import { render, screen } from "@testing-library/react";
@@ -157,12 +157,12 @@ it("introduces Inventory Autopilot", () => {
 });
 ```
 
-- [ ] **Step 3: Run the focused test and confirm failure**
+- [x] **Step 3: Run the focused test and confirm failure**
 
 Run: `pnpm vitest run src/app/page.test.tsx`
 Expected: FAIL because the page has not rendered the required heading.
 
-- [ ] **Step 4: Implement the minimum app shell**
+- [x] **Step 4: Implement the minimum app shell**
 
 ```tsx
 export default function HomePage() {
@@ -170,12 +170,12 @@ export default function HomePage() {
 }
 ```
 
-- [ ] **Step 5: Verify the project**
+- [x] **Step 5: Verify the project**
 
 Run: `pnpm test && pnpm lint && pnpm typecheck && pnpm build`
 Expected: all commands exit 0.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add .gitignore package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.json next.config.ts eslint.config.mjs postcss.config.mjs vitest.config.ts vitest.setup.ts playwright.config.ts src/app
@@ -197,7 +197,7 @@ git commit -m "chore: scaffold inventory autopilot app"
 - Consumes: Task 1 test harness.
 - Produces: `DataMode`, `RawPurchaseReceipt`, `NormalizedReceipt`, `NeedCandidate`, `ProductCandidate`, `ResolvedNeed`, `Draft`, `CartContext`, `VerifiedCart`, `SilpoGateway`, `getServerEnv()`.
 
-- [ ] **Step 1: Write failing contract and environment tests**
+- [x] **Step 1: Write failing contract and environment tests**
 
 ```ts
 import { DraftSchema } from "@/features/shared/contracts";
@@ -214,12 +214,12 @@ it("requires the Gemini key outside tests", () => {
 });
 ```
 
-- [ ] **Step 2: Run the tests and confirm failure**
+- [x] **Step 2: Run the tests and confirm failure**
 
 Run: `pnpm vitest run src/features/shared/contracts.test.ts src/lib/env.test.ts`
 Expected: FAIL because schemas and parsers do not exist.
 
-- [ ] **Step 3: Define stable contracts**
+- [x] **Step 3: Define stable contracts**
 
 ```ts
 export type DataMode = "live" | "demo";
@@ -273,16 +273,16 @@ export interface SilpoGateway {
 }
 ```
 
-- [ ] **Step 4: Implement server-only env parsing**
+- [x] **Step 4: Implement server-only env parsing**
 
 Use a Zod object requiring `DATABASE_URL`, `TOKEN_ENCRYPTION_KEY`, `GOOGLE_GENERATIVE_AI_API_KEY`, and defaulting `AGENT_MODEL` to `gemini-3.7-flash` and `DATA_MODE` to `live`. Export only `getServerEnv()`; do not export raw `process.env`.
 
-- [ ] **Step 5: Verify**
+- [x] **Step 5: Verify**
 
 Run: `pnpm vitest run src/features/shared/contracts.test.ts src/lib/env.test.ts && pnpm typecheck`
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/features/shared src/lib/env.ts src/lib/env.test.ts src/lib/result.ts
