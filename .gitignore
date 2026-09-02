@@ -1,10 +1,25 @@
-.env
-.env.*
-!.env.example
-.next/
-node_modules/
-coverage/
-playwright-report/
-test-results/
-.superpowers/
+# dependencies
+/node_modules
+/.pnp
+.pnp.*
 
+# Next.js
+/.next/
+/out/
+
+# tests
+/coverage/
+/playwright-report/
+/test-results/
+
+# local environment; Task 18 owns the safe template
+.env*
+!.env.example
+
+# TypeScript and package-manager output
+*.tsbuildinfo
+next-env.d.ts
+pnpm-debug.log*
+
+# OS/editor noise
+.DS_Store
