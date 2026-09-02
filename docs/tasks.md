@@ -1,6 +1,6 @@
-# Inventory Autopilot MVP Implementation Plan
+# «Автопілот запасів» — backlog реалізації MVP
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **Для агентів:** спочатку прочитайте кореневий `AGENTS.md`, потім лише релевантні стабільні документи та одну призначену задачу. Виконуйте checkbox-кроки послідовно; одна задача — один перевірений commit.
 
 **Goal:** Build a web application that generates an explainable personal grocery draft from Silpo purchase history, lets the user edit it, and idempotently commits confirmed products to the real Silpo cart.
 
@@ -8,7 +8,9 @@
 
 **Tech Stack:** Next.js App Router, TypeScript, React, Tailwind CSS, Vitest, Testing Library, Playwright, Zod, Drizzle ORM, Postgres, Vercel AI SDK, `@ai-sdk/google`, `@ai-sdk/mcp`, `@modelcontextprotocol/client`, Gemini 3.7 Flash.
 
-**Spec:** `docs/superpowers/specs/2026-09-02-inventory-autopilot-design.md`
+**Product spec:** [product-spec.md](./product-spec.md)
+
+**Supporting docs:** [project-architecture.md](./project-architecture.md), [agent-architecture.md](./agent-architecture.md), [design-system.md](./design-system.md)
 
 ## Global Constraints
 
