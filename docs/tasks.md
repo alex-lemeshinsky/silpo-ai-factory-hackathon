@@ -302,11 +302,11 @@ git commit -m "feat: define application contracts"
 - Consumes: `SilpoGateway` and domain types from Task 2.
 - Produces: `createDemoSilpoGateway(): SilpoGateway`.
 
-- [ ] **Step 1: Add an anonymized fixture**
+- [x] **Step 1: Add an anonymized fixture**
 
 The fixture must include 30 receipts, the current cart context, time slots, promotions, product search results, details, similar products, and both successful and blocked cart states. Replace names, phones, addresses, loyalty IDs, order IDs, and tokens with synthetic values.
 
-- [ ] **Step 2: Write failing adapter tests**
+- [x] **Step 2: Write failing adapter tests**
 
 ```ts
 const gateway = createDemoSilpoGateway();
@@ -330,16 +330,16 @@ it("updates and verifies cart context in memory", async () => {
 });
 ```
 
-- [ ] **Step 3: Run and confirm failure**
+- [x] **Step 3: Run and confirm failure**
 
 Run: `pnpm vitest run src/features/silpo/demo/demo-gateway.test.ts`
 Expected: FAIL because the adapter does not exist.
 
-- [ ] **Step 4: Implement the adapter**
+- [x] **Step 4: Implement the adapter**
 
 Load and validate the JSON once, use `structuredClone` for returned data, and implement cart mutations against in-memory state scoped to one gateway instance.
 
-- [ ] **Step 5: Verify and commit**
+- [x] **Step 5: Verify and commit**
 
 Run: `pnpm vitest run src/features/silpo/demo/demo-gateway.test.ts`
 Expected: PASS.
