@@ -101,6 +101,7 @@ Wave 10:                 T18
 ### Task 1: Project shell and test harness
 
 **Files:**
+- Create: `.gitignore`
 - Create: `package.json`
 - Create: `pnpm-workspace.yaml`
 - Create: `tsconfig.json`
@@ -141,7 +142,7 @@ Install runtime dependencies with:
 
 ```bash
 pnpm add next react react-dom zod
-pnpm add -D typescript @types/node @types/react @types/react-dom eslint eslint-config-next tailwindcss @tailwindcss/postcss vitest jsdom @vitejs/plugin-react @testing-library/react @testing-library/jest-dom @playwright/test
+pnpm add -D typescript @types/node @types/react @types/react-dom eslint eslint-config-next tailwindcss @tailwindcss/postcss postcss vitest jsdom @vitejs/plugin-react @testing-library/dom @testing-library/react @testing-library/jest-dom @playwright/test
 ```
 
 - [ ] **Step 2: Write the failing landing-page test**
@@ -177,7 +178,7 @@ Expected: all commands exit 0.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.json next.config.ts eslint.config.mjs postcss.config.mjs vitest.config.ts vitest.setup.ts playwright.config.ts src/app
+git add .gitignore package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.json next.config.ts eslint.config.mjs postcss.config.mjs vitest.config.ts vitest.setup.ts playwright.config.ts src/app
 git commit -m "chore: scaffold inventory autopilot app"
 ```
 
