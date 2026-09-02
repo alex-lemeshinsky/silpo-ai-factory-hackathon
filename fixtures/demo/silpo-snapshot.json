@@ -1,0 +1,690 @@
+{
+  "tools": [
+    "silpo_get_my_family",
+    "silpo_get_my_food_restrictions",
+    "silpo_get_loyalty_info",
+    "silpo_get_my_shopping_cart",
+    "silpo_get_shopping_cart_by_id",
+    "silpo_update_shopping_cart",
+    "silpo_get_my_online_orders",
+    "silpo_get_my_offline_orders",
+    "silpo_find_products_batch",
+    "silpo_get_promotions",
+    "silpo_get_product_details",
+    "silpo_get_similar_products",
+    "silpo_get_time_slots",
+    "silpo_add_or_update_cart_products"
+  ],
+  "customerContext": {
+    "familySize": 3,
+    "restrictionKeys": ["no-added-sugar"],
+    "loyaltyBonusAvailable": 84.5
+  },
+  "cartContext": {
+    "status": "ready",
+    "context": {
+      "cartId": "demo-cart-ready",
+      "deliveryType": "delivery",
+      "city": "Київ",
+      "branchId": "demo-branch-kyiv-01",
+      "slot": {
+        "id": "demo-slot-delivery",
+        "startsAt": "2026-09-03T09:00:00.000+03:00",
+        "endsAt": "2026-09-03T11:00:00.000+03:00",
+        "available": true
+      }
+    }
+  },
+  "timeSlots": [
+    {
+      "id": "demo-slot-delivery",
+      "startsAt": "2026-09-03T09:00:00.000+03:00",
+      "endsAt": "2026-09-03T11:00:00.000+03:00",
+      "available": true
+    },
+    {
+      "id": "demo-slot-pickup",
+      "startsAt": "2026-09-03T12:00:00.000+03:00",
+      "endsAt": "2026-09-03T13:00:00.000+03:00",
+      "available": true
+    },
+    {
+      "id": "demo-slot-expired",
+      "startsAt": "2026-09-01T12:00:00.000+03:00",
+      "endsAt": "2026-09-01T14:00:00.000+03:00",
+      "available": false
+    }
+  ],
+  "purchaseHistory": [
+    {
+      "sourceId": "demo-receipt-01",
+      "channel": "offline",
+      "purchasedAt": "2026-03-10T17:20:00.000+02:00",
+      "city": "Київ",
+      "total": 72.8,
+      "items": [
+        { "sourceId": "demo-item-01-a", "externalProductId": 1001, "productId": "demo-water-still-15l", "name": "Вода негазована Демо 1,5 л", "quantity": 1, "unit": "шт", "unitPrice": 24.9 },
+        { "sourceId": "demo-item-01-b", "externalProductId": 1003, "productId": "demo-milk-25-900g", "name": "Молоко Демо 2,5% 900 г", "quantity": 1, "unit": "шт", "unitPrice": 47.9 }
+      ]
+    },
+    {
+      "sourceId": "demo-receipt-02",
+      "channel": "offline",
+      "purchasedAt": "2026-03-16T18:05:00.000+02:00",
+      "city": "Київ",
+      "total": 63.4,
+      "items": [
+        { "sourceId": "demo-item-02-a", "externalProductId": 1001, "productId": "demo-water-still-15l", "name": "Вода негазована Демо 1,5 л", "quantity": 1, "unit": "шт", "unitPrice": 24.9 },
+        { "sourceId": "demo-item-02-b", "externalProductId": 1007, "productId": "demo-bread-wholegrain-400g", "name": "Хліб цільнозерновий Демо 400 г", "quantity": 1, "unit": "шт", "unitPrice": 38.5 }
+      ]
+    },
+    {
+      "sourceId": "demo-receipt-03",
+      "channel": "offline",
+      "purchasedAt": "2026-03-22T16:40:00.000+02:00",
+      "city": "Київ",
+      "total": 144.8,
+      "items": [
+        { "sourceId": "demo-item-03-a", "externalProductId": 1001, "productId": "demo-water-still-15l", "name": "Вода негазована Демо 1,5 л", "quantity": 1, "unit": "шт", "unitPrice": 24.9 },
+        { "sourceId": "demo-item-03-b", "externalProductId": 1003, "productId": "demo-milk-25-900g", "name": "Молоко Демо 2,5% 900 г", "quantity": 1, "unit": "шт", "unitPrice": 47.9 },
+        { "sourceId": "demo-item-03-c", "externalProductId": 1006, "productId": "demo-eggs-c1-10", "name": "Яйця курячі Демо C1 10 шт", "quantity": 1, "unit": "уп", "unitPrice": 72 }
+      ]
+    },
+    {
+      "sourceId": "demo-receipt-04",
+      "channel": "offline",
+      "purchasedAt": "2026-03-28T19:10:00.000+02:00",
+      "city": "Київ",
+      "total": 108.3,
+      "items": [
+        { "sourceId": "demo-item-04-a", "externalProductId": 1001, "productId": "demo-water-still-15l", "name": "Вода негазована Демо 1,5 л", "quantity": 1, "unit": "шт", "unitPrice": 24.9 },
+        { "sourceId": "demo-item-04-b", "externalProductId": 1007, "productId": "demo-bread-wholegrain-400g", "name": "Хліб цільнозерновий Демо 400 г", "quantity": 1, "unit": "шт", "unitPrice": 38.5 },
+        { "sourceId": "demo-item-04-c", "externalProductId": 1009, "productId": "demo-yogurt-natural-300g", "name": "Йогурт натуральний Демо 300 г", "quantity": 1, "unit": "шт", "unitPrice": 44.9 }
+      ]
+    },
+    {
+      "sourceId": "demo-receipt-05",
+      "channel": "offline",
+      "purchasedAt": "2026-04-03T17:55:00.000+03:00",
+      "city": "Київ",
+      "total": 122.7,
+      "items": [
+        { "sourceId": "demo-item-05-a", "externalProductId": 1001, "productId": "demo-water-still-15l", "name": "Вода негазована Демо 1,5 л", "quantity": 1, "unit": "шт", "unitPrice": 24.9 },
+        { "sourceId": "demo-item-05-b", "externalProductId": 1003, "productId": "demo-milk-25-900g", "name": "Молоко Демо 2,5% 900 г", "quantity": 1, "unit": "шт", "unitPrice": 47.9 },
+        { "sourceId": "demo-item-05-c", "externalProductId": 1005, "productId": "demo-oatmeal-500g", "name": "Пластівці вівсяні Демо 500 г", "quantity": 1, "unit": "шт", "unitPrice": 49.9 }
+      ]
+    },
+    {
+      "sourceId": "demo-receipt-06",
+      "channel": "offline",
+      "purchasedAt": "2026-04-09T18:30:00.000+03:00",
+      "city": "Львів",
+      "total": 135.4,
+      "items": [
+        { "sourceId": "demo-item-06-a", "externalProductId": 1001, "productId": "demo-water-still-15l", "name": "Вода негазована Демо 1,5 л", "quantity": 1, "unit": "шт", "unitPrice": 24.9 },
+        { "sourceId": "demo-item-06-b", "externalProductId": 1007, "productId": "demo-bread-wholegrain-400g", "name": "Хліб цільнозерновий Демо 400 г", "quantity": 1, "unit": "шт", "unitPrice": 38.5 },
+        { "sourceId": "demo-item-06-c", "externalProductId": 1006, "productId": "demo-eggs-c1-10", "name": "Яйця курячі Демо C1 10 шт", "quantity": 1, "unit": "уп", "unitPrice": 72 }
+      ]
+    },
+    {
+      "sourceId": "demo-receipt-07",
+      "channel": "offline",
+      "purchasedAt": "2026-04-15T16:15:00.000+03:00",
+      "city": "Київ",
+      "total": 72.8,
+      "items": [
+        { "sourceId": "demo-item-07-a", "externalProductId": 1001, "productId": "demo-water-still-15l", "name": "Вода негазована Демо 1,5 л", "quantity": 1, "unit": "шт", "unitPrice": 24.9 },
+        { "sourceId": "demo-item-07-b", "externalProductId": 1003, "productId": "demo-milk-25-900g", "name": "Молоко Демо 2,5% 900 г", "quantity": 1, "unit": "шт", "unitPrice": 47.9 }
+      ]
+    },
+    {
+      "sourceId": "demo-receipt-08",
+      "channel": "offline",
+      "purchasedAt": "2026-04-21T18:45:00.000+03:00",
+      "city": "Київ",
+      "total": 267.3,
+      "items": [
+        { "sourceId": "demo-item-08-a", "externalProductId": 1001, "productId": "demo-water-still-15l", "name": "Вода негазована Демо 1,5 л", "quantity": 1, "unit": "шт", "unitPrice": 24.9 },
+        { "sourceId": "demo-item-08-b", "externalProductId": 1007, "productId": "demo-bread-wholegrain-400g", "name": "Хліб цільнозерновий Демо 400 г", "quantity": 1, "unit": "шт", "unitPrice": 38.5 },
+        { "sourceId": "demo-item-08-c", "externalProductId": 1009, "productId": "demo-yogurt-natural-300g", "name": "Йогурт натуральний Демо 300 г", "quantity": 1, "unit": "шт", "unitPrice": 44.9 },
+        { "sourceId": "demo-item-08-d", "externalProductId": 1008, "productId": "demo-coffee-ground-250g", "name": "Кава мелена Демо 250 г", "quantity": 1, "unit": "шт", "unitPrice": 159 }
+      ]
+    },
+    {
+      "sourceId": "demo-receipt-09",
+      "channel": "offline",
+      "purchasedAt": "2026-04-27T17:35:00.000+03:00",
+      "city": "Київ",
+      "total": 144.8,
+      "items": [
+        { "sourceId": "demo-item-09-a", "externalProductId": 1001, "productId": "demo-water-still-15l", "name": "Вода негазована Демо 1,5 л", "quantity": 1, "unit": "шт", "unitPrice": 24.9 },
+        { "sourceId": "demo-item-09-b", "externalProductId": 1003, "productId": "demo-milk-25-900g", "name": "Молоко Демо 2,5% 900 г", "quantity": 1, "unit": "шт", "unitPrice": 47.9 },
+        { "sourceId": "demo-item-09-c", "externalProductId": 1006, "productId": "demo-eggs-c1-10", "name": "Яйця курячі Демо C1 10 шт", "quantity": 1, "unit": "уп", "unitPrice": 72 }
+      ]
+    },
+    {
+      "sourceId": "demo-receipt-10",
+      "channel": "offline",
+      "purchasedAt": "2026-05-03T18:00:00.000+03:00",
+      "city": "Київ",
+      "total": 113.3,
+      "items": [
+        { "sourceId": "demo-item-10-a", "externalProductId": 1001, "productId": "demo-water-still-15l", "name": "Вода негазована Демо 1,5 л", "quantity": 1, "unit": "шт", "unitPrice": 24.9 },
+        { "sourceId": "demo-item-10-b", "externalProductId": 1007, "productId": "demo-bread-wholegrain-400g", "name": "Хліб цільнозерновий Демо 400 г", "quantity": 1, "unit": "шт", "unitPrice": 38.5 },
+        { "sourceId": "demo-item-10-c", "externalProductId": 1005, "productId": "demo-oatmeal-500g", "name": "Пластівці вівсяні Демо 500 г", "quantity": 1, "unit": "шт", "unitPrice": 49.9 }
+      ]
+    },
+    {
+      "sourceId": "demo-receipt-11",
+      "channel": "offline",
+      "purchasedAt": "2026-05-09T16:50:00.000+03:00",
+      "city": "Київ",
+      "total": 72.8,
+      "items": [
+        { "sourceId": "demo-item-11-a", "externalProductId": 1001, "productId": "demo-water-still-15l", "name": "Вода негазована Демо 1,5 л", "quantity": 1, "unit": "шт", "unitPrice": 24.9 },
+        { "sourceId": "demo-item-11-b", "externalProductId": 1003, "productId": "demo-milk-25-900g", "name": "Молоко Демо 2,5% 900 г", "quantity": 1, "unit": "шт", "unitPrice": 47.9 }
+      ]
+    },
+    {
+      "sourceId": "demo-receipt-12",
+      "channel": "offline",
+      "purchasedAt": "2026-05-15T18:20:00.000+03:00",
+      "city": "Львів",
+      "total": 180.3,
+      "items": [
+        { "sourceId": "demo-item-12-a", "externalProductId": 1001, "productId": "demo-water-still-15l", "name": "Вода негазована Демо 1,5 л", "quantity": 1, "unit": "шт", "unitPrice": 24.9 },
+        { "sourceId": "demo-item-12-b", "externalProductId": 1007, "productId": "demo-bread-wholegrain-400g", "name": "Хліб цільнозерновий Демо 400 г", "quantity": 1, "unit": "шт", "unitPrice": 38.5 },
+        { "sourceId": "demo-item-12-c", "externalProductId": 1006, "productId": "demo-eggs-c1-10", "name": "Яйця курячі Демо C1 10 шт", "quantity": 1, "unit": "уп", "unitPrice": 72 },
+        { "sourceId": "demo-item-12-d", "externalProductId": 1009, "productId": "demo-yogurt-natural-300g", "name": "Йогурт натуральний Демо 300 г", "quantity": 1, "unit": "шт", "unitPrice": 44.9 }
+      ]
+    },
+    {
+      "sourceId": "demo-receipt-13",
+      "channel": "offline",
+      "purchasedAt": "2026-05-21T17:25:00.000+03:00",
+      "city": "Київ",
+      "total": 72.8,
+      "items": [
+        { "sourceId": "demo-item-13-a", "externalProductId": 1001, "productId": "demo-water-still-15l", "name": "Вода негазована Демо 1,5 л", "quantity": 1, "unit": "шт", "unitPrice": 24.9 },
+        { "sourceId": "demo-item-13-b", "externalProductId": 1003, "productId": "demo-milk-25-900g", "name": "Молоко Демо 2,5% 900 г", "quantity": 1, "unit": "шт", "unitPrice": 47.9 }
+      ]
+    },
+    {
+      "sourceId": "demo-receipt-14",
+      "channel": "offline",
+      "purchasedAt": "2026-05-27T18:10:00.000+03:00",
+      "city": "Київ",
+      "total": 63.4,
+      "items": [
+        { "sourceId": "demo-item-14-a", "externalProductId": 1001, "productId": "demo-water-still-15l", "name": "Вода негазована Демо 1,5 л", "quantity": 1, "unit": "шт", "unitPrice": 24.9 },
+        { "sourceId": "demo-item-14-b", "externalProductId": 1007, "productId": "demo-bread-wholegrain-400g", "name": "Хліб цільнозерновий Демо 400 г", "quantity": 1, "unit": "шт", "unitPrice": 38.5 }
+      ]
+    },
+    {
+      "sourceId": "demo-receipt-15",
+      "channel": "offline",
+      "purchasedAt": "2026-06-02T17:40:00.000+03:00",
+      "city": "Київ",
+      "total": 194.7,
+      "items": [
+        { "sourceId": "demo-item-15-a", "externalProductId": 1001, "productId": "demo-water-still-15l", "name": "Вода негазована Демо 1,5 л", "quantity": 1, "unit": "шт", "unitPrice": 24.9 },
+        { "sourceId": "demo-item-15-b", "externalProductId": 1003, "productId": "demo-milk-25-900g", "name": "Молоко Демо 2,5% 900 г", "quantity": 1, "unit": "шт", "unitPrice": 47.9 },
+        { "sourceId": "demo-item-15-c", "externalProductId": 1005, "productId": "demo-oatmeal-500g", "name": "Пластівці вівсяні Демо 500 г", "quantity": 1, "unit": "шт", "unitPrice": 49.9 },
+        { "sourceId": "demo-item-15-d", "externalProductId": 1006, "productId": "demo-eggs-c1-10", "name": "Яйця курячі Демо C1 10 шт", "quantity": 1, "unit": "уп", "unitPrice": 72 }
+      ]
+    },
+    {
+      "sourceId": "demo-receipt-16",
+      "channel": "offline",
+      "purchasedAt": "2026-06-08T18:35:00.000+03:00",
+      "city": "Київ",
+      "total": 267.3,
+      "items": [
+        { "sourceId": "demo-item-16-a", "externalProductId": 1001, "productId": "demo-water-still-15l", "name": "Вода негазована Демо 1,5 л", "quantity": 1, "unit": "шт", "unitPrice": 24.9 },
+        { "sourceId": "demo-item-16-b", "externalProductId": 1007, "productId": "demo-bread-wholegrain-400g", "name": "Хліб цільнозерновий Демо 400 г", "quantity": 1, "unit": "шт", "unitPrice": 38.5 },
+        { "sourceId": "demo-item-16-c", "externalProductId": 1009, "productId": "demo-yogurt-natural-300g", "name": "Йогурт натуральний Демо 300 г", "quantity": 1, "unit": "шт", "unitPrice": 44.9 },
+        { "sourceId": "demo-item-16-d", "externalProductId": 1008, "productId": "demo-coffee-ground-250g", "name": "Кава мелена Демо 250 г", "quantity": 1, "unit": "шт", "unitPrice": 159 }
+      ]
+    },
+    {
+      "sourceId": "demo-receipt-17",
+      "channel": "offline",
+      "purchasedAt": "2026-06-14T16:30:00.000+03:00",
+      "city": "Київ",
+      "total": 72.8,
+      "items": [
+        { "sourceId": "demo-item-17-a", "externalProductId": 1001, "productId": "demo-water-still-15l", "name": "Вода негазована Демо 1,5 л", "quantity": 1, "unit": "шт", "unitPrice": 24.9 },
+        { "sourceId": "demo-item-17-b", "externalProductId": 1003, "productId": "demo-milk-25-900g", "name": "Молоко Демо 2,5% 900 г", "quantity": 1, "unit": "шт", "unitPrice": 47.9 }
+      ]
+    },
+    {
+      "sourceId": "demo-receipt-18",
+      "channel": "offline",
+      "purchasedAt": "2026-06-20T18:15:00.000+03:00",
+      "city": "Львів",
+      "total": 135.4,
+      "items": [
+        { "sourceId": "demo-item-18-a", "externalProductId": 1001, "productId": "demo-water-still-15l", "name": "Вода негазована Демо 1,5 л", "quantity": 1, "unit": "шт", "unitPrice": 24.9 },
+        { "sourceId": "demo-item-18-b", "externalProductId": 1007, "productId": "demo-bread-wholegrain-400g", "name": "Хліб цільнозерновий Демо 400 г", "quantity": 1, "unit": "шт", "unitPrice": 38.5 },
+        { "sourceId": "demo-item-18-c", "externalProductId": 1006, "productId": "demo-eggs-c1-10", "name": "Яйця курячі Демо C1 10 шт", "quantity": 1, "unit": "уп", "unitPrice": 72 }
+      ]
+    },
+    {
+      "sourceId": "demo-receipt-19",
+      "channel": "offline",
+      "purchasedAt": "2026-06-26T17:45:00.000+03:00",
+      "city": "Київ",
+      "total": 72.8,
+      "items": [
+        { "sourceId": "demo-item-19-a", "externalProductId": 1001, "productId": "demo-water-still-15l", "name": "Вода негазована Демо 1,5 л", "quantity": 1, "unit": "шт", "unitPrice": 24.9 },
+        { "sourceId": "demo-item-19-b", "externalProductId": 1003, "productId": "demo-milk-25-900g", "name": "Молоко Демо 2,5% 900 г", "quantity": 1, "unit": "шт", "unitPrice": 47.9 }
+      ]
+    },
+    {
+      "sourceId": "demo-receipt-20",
+      "channel": "offline",
+      "purchasedAt": "2026-07-02T18:25:00.000+03:00",
+      "city": "Київ",
+      "total": 158.2,
+      "items": [
+        { "sourceId": "demo-item-20-a", "externalProductId": 1001, "productId": "demo-water-still-15l", "name": "Вода негазована Демо 1,5 л", "quantity": 1, "unit": "шт", "unitPrice": 24.9 },
+        { "sourceId": "demo-item-20-b", "externalProductId": 1007, "productId": "demo-bread-wholegrain-400g", "name": "Хліб цільнозерновий Демо 400 г", "quantity": 1, "unit": "шт", "unitPrice": 38.5 },
+        { "sourceId": "demo-item-20-c", "externalProductId": 1005, "productId": "demo-oatmeal-500g", "name": "Пластівці вівсяні Демо 500 г", "quantity": 1, "unit": "шт", "unitPrice": 49.9 },
+        { "sourceId": "demo-item-20-d", "externalProductId": 1009, "productId": "demo-yogurt-natural-300g", "name": "Йогурт натуральний Демо 300 г", "quantity": 1, "unit": "шт", "unitPrice": 44.9 }
+      ]
+    },
+    {
+      "sourceId": "demo-receipt-21",
+      "channel": "offline",
+      "purchasedAt": "2026-07-08T17:10:00.000+03:00",
+      "city": "Київ",
+      "total": 144.8,
+      "items": [
+        { "sourceId": "demo-item-21-a", "externalProductId": 1001, "productId": "demo-water-still-15l", "name": "Вода негазована Демо 1,5 л", "quantity": 1, "unit": "шт", "unitPrice": 24.9 },
+        { "sourceId": "demo-item-21-b", "externalProductId": 1003, "productId": "demo-milk-25-900g", "name": "Молоко Демо 2,5% 900 г", "quantity": 1, "unit": "шт", "unitPrice": 47.9 },
+        { "sourceId": "demo-item-21-c", "externalProductId": 1006, "productId": "demo-eggs-c1-10", "name": "Яйця курячі Демо C1 10 шт", "quantity": 1, "unit": "уп", "unitPrice": 72 }
+      ]
+    },
+    {
+      "sourceId": "demo-receipt-22",
+      "channel": "offline",
+      "purchasedAt": "2026-07-14T18:50:00.000+03:00",
+      "city": "Київ",
+      "total": 63.4,
+      "items": [
+        { "sourceId": "demo-item-22-a", "externalProductId": 1001, "productId": "demo-water-still-15l", "name": "Вода негазована Демо 1,5 л", "quantity": 1, "unit": "шт", "unitPrice": 24.9 },
+        { "sourceId": "demo-item-22-b", "externalProductId": 1007, "productId": "demo-bread-wholegrain-400g", "name": "Хліб цільнозерновий Демо 400 г", "quantity": 1, "unit": "шт", "unitPrice": 38.5 }
+      ]
+    },
+    {
+      "sourceId": "demo-receipt-23",
+      "channel": "offline",
+      "purchasedAt": "2026-07-20T16:55:00.000+03:00",
+      "city": "Київ",
+      "total": 72.8,
+      "items": [
+        { "sourceId": "demo-item-23-a", "externalProductId": 1001, "productId": "demo-water-still-15l", "name": "Вода негазована Демо 1,5 л", "quantity": 1, "unit": "шт", "unitPrice": 24.9 },
+        { "sourceId": "demo-item-23-b", "externalProductId": 1003, "productId": "demo-milk-25-900g", "name": "Молоко Демо 2,5% 900 г", "quantity": 1, "unit": "шт", "unitPrice": 47.9 }
+      ]
+    },
+    {
+      "sourceId": "demo-receipt-24",
+      "channel": "offline",
+      "purchasedAt": "2026-07-26T18:05:00.000+03:00",
+      "city": "Львів",
+      "total": 294.4,
+      "items": [
+        { "sourceId": "demo-item-24-a", "externalProductId": 1001, "productId": "demo-water-still-15l", "name": "Вода негазована Демо 1,5 л", "quantity": 1, "unit": "шт", "unitPrice": 24.9 },
+        { "sourceId": "demo-item-24-b", "externalProductId": 1007, "productId": "demo-bread-wholegrain-400g", "name": "Хліб цільнозерновий Демо 400 г", "quantity": 1, "unit": "шт", "unitPrice": 38.5 },
+        { "sourceId": "demo-item-24-c", "externalProductId": 1006, "productId": "demo-eggs-c1-10", "name": "Яйця курячі Демо C1 10 шт", "quantity": 1, "unit": "уп", "unitPrice": 72 },
+        { "sourceId": "demo-item-24-d", "externalProductId": 1008, "productId": "demo-coffee-ground-250g", "name": "Кава мелена Демо 250 г", "quantity": 1, "unit": "шт", "unitPrice": 159 }
+      ]
+    },
+    {
+      "sourceId": "demo-receipt-25",
+      "channel": "offline",
+      "purchasedAt": "2026-08-01T17:30:00.000+03:00",
+      "city": "Київ",
+      "total": 167.6,
+      "items": [
+        { "sourceId": "demo-item-25-a", "externalProductId": 1001, "productId": "demo-water-still-15l", "name": "Вода негазована Демо 1,5 л", "quantity": 1, "unit": "шт", "unitPrice": 24.9 },
+        { "sourceId": "demo-item-25-b", "externalProductId": 1003, "productId": "demo-milk-25-900g", "name": "Молоко Демо 2,5% 900 г", "quantity": 1, "unit": "шт", "unitPrice": 47.9 },
+        { "sourceId": "demo-item-25-c", "externalProductId": 1005, "productId": "demo-oatmeal-500g", "name": "Пластівці вівсяні Демо 500 г", "quantity": 1, "unit": "шт", "unitPrice": 49.9 },
+        { "sourceId": "demo-item-25-d", "externalProductId": 1009, "productId": "demo-yogurt-natural-300g", "name": "Йогурт натуральний Демо 300 г", "quantity": 1, "unit": "шт", "unitPrice": 44.9 }
+      ]
+    },
+    {
+      "sourceId": "demo-receipt-26",
+      "channel": "offline",
+      "purchasedAt": "2026-08-07T18:40:00.000+03:00",
+      "city": "Київ",
+      "total": 63.4,
+      "items": [
+        { "sourceId": "demo-item-26-a", "externalProductId": 1001, "productId": "demo-water-still-15l", "name": "Вода негазована Демо 1,5 л", "quantity": 1, "unit": "шт", "unitPrice": 24.9 },
+        { "sourceId": "demo-item-26-b", "externalProductId": 1007, "productId": "demo-bread-wholegrain-400g", "name": "Хліб цільнозерновий Демо 400 г", "quantity": 1, "unit": "шт", "unitPrice": 38.5 }
+      ]
+    },
+    {
+      "sourceId": "demo-receipt-27",
+      "channel": "offline",
+      "purchasedAt": "2026-08-13T16:45:00.000+03:00",
+      "city": "Київ",
+      "total": 144.8,
+      "items": [
+        { "sourceId": "demo-item-27-a", "externalProductId": 1001, "productId": "demo-water-still-15l", "name": "Вода негазована Демо 1,5 л", "quantity": 1, "unit": "шт", "unitPrice": 24.9 },
+        { "sourceId": "demo-item-27-b", "externalProductId": 1003, "productId": "demo-milk-25-900g", "name": "Молоко Демо 2,5% 900 г", "quantity": 1, "unit": "шт", "unitPrice": 47.9 },
+        { "sourceId": "demo-item-27-c", "externalProductId": 1006, "productId": "demo-eggs-c1-10", "name": "Яйця курячі Демо C1 10 шт", "quantity": 1, "unit": "уп", "unitPrice": 72 }
+      ]
+    },
+    {
+      "sourceId": "demo-receipt-28",
+      "channel": "offline",
+      "purchasedAt": "2026-08-19T18:30:00.000+03:00",
+      "city": "Київ",
+      "total": 108.3,
+      "items": [
+        { "sourceId": "demo-item-28-a", "externalProductId": 1001, "productId": "demo-water-still-15l", "name": "Вода негазована Демо 1,5 л", "quantity": 1, "unit": "шт", "unitPrice": 24.9 },
+        { "sourceId": "demo-item-28-b", "externalProductId": 1007, "productId": "demo-bread-wholegrain-400g", "name": "Хліб цільнозерновий Демо 400 г", "quantity": 1, "unit": "шт", "unitPrice": 38.5 },
+        { "sourceId": "demo-item-28-c", "externalProductId": 1009, "productId": "demo-yogurt-natural-300g", "name": "Йогурт натуральний Демо 300 г", "quantity": 1, "unit": "шт", "unitPrice": 44.9 }
+      ]
+    },
+    {
+      "sourceId": "demo-receipt-29",
+      "channel": "offline",
+      "purchasedAt": "2026-08-25T17:15:00.000+03:00",
+      "city": "Київ",
+      "total": 72.8,
+      "items": [
+        { "sourceId": "demo-item-29-a", "externalProductId": 1001, "productId": "demo-water-still-15l", "name": "Вода негазована Демо 1,5 л", "quantity": 1, "unit": "шт", "unitPrice": 24.9 },
+        { "sourceId": "demo-item-29-b", "externalProductId": 1003, "productId": "demo-milk-25-900g", "name": "Молоко Демо 2,5% 900 г", "quantity": 1, "unit": "шт", "unitPrice": 47.9 }
+      ]
+    },
+    {
+      "sourceId": "demo-receipt-30",
+      "channel": "offline",
+      "purchasedAt": "2026-08-31T18:00:00.000+03:00",
+      "city": "Львів",
+      "total": 185.3,
+      "items": [
+        { "sourceId": "demo-item-30-a", "externalProductId": 1001, "productId": "demo-water-still-15l", "name": "Вода негазована Демо 1,5 л", "quantity": 1, "unit": "шт", "unitPrice": 24.9 },
+        { "sourceId": "demo-item-30-b", "externalProductId": 1007, "productId": "demo-bread-wholegrain-400g", "name": "Хліб цільнозерновий Демо 400 г", "quantity": 1, "unit": "шт", "unitPrice": 38.5 },
+        { "sourceId": "demo-item-30-c", "externalProductId": 1005, "productId": "demo-oatmeal-500g", "name": "Пластівці вівсяні Демо 500 г", "quantity": 1, "unit": "шт", "unitPrice": 49.9 },
+        { "sourceId": "demo-item-30-d", "externalProductId": 1006, "productId": "demo-eggs-c1-10", "name": "Яйця курячі Демо C1 10 шт", "quantity": 1, "unit": "уп", "unitPrice": 72 }
+      ]
+    }
+  ],
+  "promotions": [
+    { "id": "demo-promo-oatmeal", "label": "Демонстраційна знижка", "price": 42.9 },
+    { "id": "demo-promo-coffee", "label": "Демонстраційна ціна тижня", "price": 139 }
+  ],
+  "productSearchResults": [
+    {
+      "query": "вода",
+      "products": [
+        {
+          "productId": "demo-water-still-15l",
+          "externalProductId": 1001,
+          "slug": "demo-water-still-15l",
+          "name": "Вода негазована Демо 1,5 л",
+          "imageUrl": null,
+          "price": 24.9,
+          "specialPrice": null,
+          "available": true,
+          "stock": 32,
+          "step": 1,
+          "displayRatio": 1,
+          "nutritionStatus": "insufficient",
+          "nutrition": null,
+          "promotions": []
+        },
+        {
+          "productId": "demo-water-still-2l",
+          "externalProductId": 1002,
+          "slug": "demo-water-still-2l",
+          "name": "Вода негазована Демо 2 л",
+          "imageUrl": null,
+          "price": 29.9,
+          "specialPrice": null,
+          "available": true,
+          "stock": 20,
+          "step": 1,
+          "displayRatio": 1,
+          "nutritionStatus": "insufficient",
+          "nutrition": null,
+          "promotions": []
+        }
+      ]
+    },
+    {
+      "query": "молоко",
+      "products": [
+        {
+          "productId": "demo-milk-25-900g",
+          "externalProductId": 1003,
+          "slug": "demo-milk-25-900g",
+          "name": "Молоко Демо 2,5% 900 г",
+          "imageUrl": null,
+          "price": 47.9,
+          "specialPrice": null,
+          "available": true,
+          "stock": 18,
+          "step": 1,
+          "displayRatio": 1,
+          "nutritionStatus": "known",
+          "nutrition": { "caloriesKcal": 54, "proteinGrams": 3, "fatGrams": 2.5, "carbohydrateGrams": 4.7 },
+          "promotions": []
+        },
+        {
+          "productId": "demo-milk-lactose-free-900g",
+          "externalProductId": 1004,
+          "slug": "demo-milk-lactose-free-900g",
+          "name": "Молоко безлактозне Демо 900 г",
+          "imageUrl": null,
+          "price": 61.9,
+          "specialPrice": null,
+          "available": true,
+          "stock": 11,
+          "step": 1,
+          "displayRatio": 1,
+          "nutritionStatus": "known",
+          "nutrition": { "caloriesKcal": 52, "proteinGrams": 3.1, "fatGrams": 2.5, "carbohydrateGrams": 4.6 },
+          "promotions": []
+        }
+      ]
+    },
+    {
+      "query": "вівсяні пластівці",
+      "products": [
+        {
+          "productId": "demo-oatmeal-500g",
+          "externalProductId": 1005,
+          "slug": "demo-oatmeal-500g",
+          "name": "Пластівці вівсяні Демо 500 г",
+          "imageUrl": null,
+          "price": 49.9,
+          "specialPrice": 42.9,
+          "available": true,
+          "stock": 15,
+          "step": 1,
+          "displayRatio": 1,
+          "nutritionStatus": "known",
+          "nutrition": { "caloriesKcal": 352, "proteinGrams": 12.3, "fatGrams": 6.2, "carbohydrateGrams": 61.8 },
+          "promotions": [{ "id": "demo-promo-oatmeal", "label": "Демонстраційна знижка", "price": 42.9 }]
+        }
+      ]
+    },
+    {
+      "query": "яйця",
+      "products": [
+        {
+          "productId": "demo-eggs-c1-10",
+          "externalProductId": 1006,
+          "slug": "demo-eggs-c1-10",
+          "name": "Яйця курячі Демо C1 10 шт",
+          "imageUrl": null,
+          "price": 72,
+          "specialPrice": null,
+          "available": false,
+          "stock": 0,
+          "step": 1,
+          "displayRatio": 1,
+          "nutritionStatus": "insufficient",
+          "nutrition": null,
+          "promotions": []
+        }
+      ]
+    }
+  ],
+  "productDetails": [
+    {
+      "productId": "demo-water-still-15l",
+      "externalProductId": 1001,
+      "slug": "demo-water-still-15l",
+      "name": "Вода негазована Демо 1,5 л",
+      "imageUrl": null,
+      "price": 24.9,
+      "specialPrice": null,
+      "available": true,
+      "stock": 32,
+      "step": 1,
+      "displayRatio": 1,
+      "nutritionStatus": "insufficient",
+      "nutrition": null,
+      "promotions": [],
+      "description": "Синтетичний демонстраційний товар.",
+      "ingredients": null
+    },
+    {
+      "productId": "demo-milk-25-900g",
+      "externalProductId": 1003,
+      "slug": "demo-milk-25-900g",
+      "name": "Молоко Демо 2,5% 900 г",
+      "imageUrl": null,
+      "price": 47.9,
+      "specialPrice": null,
+      "available": true,
+      "stock": 18,
+      "step": 1,
+      "displayRatio": 1,
+      "nutritionStatus": "known",
+      "nutrition": { "caloriesKcal": 54, "proteinGrams": 3, "fatGrams": 2.5, "carbohydrateGrams": 4.7 },
+      "promotions": [],
+      "description": "Синтетичний демонстраційний товар.",
+      "ingredients": "Молоко коров'яче нормалізоване."
+    },
+    {
+      "productId": "demo-oatmeal-500g",
+      "externalProductId": 1005,
+      "slug": "demo-oatmeal-500g",
+      "name": "Пластівці вівсяні Демо 500 г",
+      "imageUrl": null,
+      "price": 49.9,
+      "specialPrice": 42.9,
+      "available": true,
+      "stock": 15,
+      "step": 1,
+      "displayRatio": 1,
+      "nutritionStatus": "known",
+      "nutrition": { "caloriesKcal": 352, "proteinGrams": 12.3, "fatGrams": 6.2, "carbohydrateGrams": 61.8 },
+      "promotions": [{ "id": "demo-promo-oatmeal", "label": "Демонстраційна знижка", "price": 42.9 }],
+      "description": "Синтетичний демонстраційний товар.",
+      "ingredients": "Пластівці вівсяні."
+    },
+    {
+      "productId": "demo-eggs-c1-10",
+      "externalProductId": 1006,
+      "slug": "demo-eggs-c1-10",
+      "name": "Яйця курячі Демо C1 10 шт",
+      "imageUrl": null,
+      "price": 72,
+      "specialPrice": null,
+      "available": false,
+      "stock": 0,
+      "step": 1,
+      "displayRatio": 1,
+      "nutritionStatus": "insufficient",
+      "nutrition": null,
+      "promotions": [],
+      "description": "Синтетичний демонстраційний товар без залишку.",
+      "ingredients": null
+    }
+  ],
+  "similarProducts": [
+    {
+      "slug": "demo-water-still-15l",
+      "products": [
+        {
+          "productId": "demo-water-still-2l",
+          "externalProductId": 1002,
+          "slug": "demo-water-still-2l",
+          "name": "Вода негазована Демо 2 л",
+          "imageUrl": null,
+          "price": 29.9,
+          "specialPrice": null,
+          "available": true,
+          "stock": 20,
+          "step": 1,
+          "displayRatio": 1,
+          "nutritionStatus": "insufficient",
+          "nutrition": null,
+          "promotions": []
+        }
+      ]
+    },
+    {
+      "slug": "demo-milk-25-900g",
+      "products": [
+        {
+          "productId": "demo-milk-lactose-free-900g",
+          "externalProductId": 1004,
+          "slug": "demo-milk-lactose-free-900g",
+          "name": "Молоко безлактозне Демо 900 г",
+          "imageUrl": null,
+          "price": 61.9,
+          "specialPrice": null,
+          "available": true,
+          "stock": 11,
+          "step": 1,
+          "displayRatio": 1,
+          "nutritionStatus": "known",
+          "nutrition": { "caloriesKcal": 52, "proteinGrams": 3.1, "fatGrams": 2.5, "carbohydrateGrams": 4.6 },
+          "promotions": []
+        }
+      ]
+    },
+    {
+      "slug": "demo-eggs-c1-10",
+      "products": []
+    }
+  ],
+  "carts": [
+    {
+      "cartId": "demo-cart-ready",
+      "status": "verified",
+      "items": [
+        { "productId": "demo-water-still-15l", "quantity": 1, "unitPrice": 24.9, "available": true }
+      ],
+      "total": 24.9,
+      "validations": [
+        { "severity": "warning", "code": "demo_data", "message": "Кошик використовує демонстраційні дані", "productId": null }
+      ],
+      "checkoutLinks": {
+        "web": "https://demo.example.test/cart/demo-cart-ready",
+        "mobile": "https://demo.example.test/app/cart/demo-cart-ready"
+      }
+    },
+    {
+      "cartId": "demo-cart-blocked",
+      "status": "blocked",
+      "items": [
+        { "productId": "demo-eggs-c1-10", "quantity": 1, "unitPrice": 72, "available": false }
+      ],
+      "total": 72,
+      "validations": [
+        { "severity": "error", "code": "slot_expired", "message": "Оберіть новий демонстраційний слот", "productId": null },
+        { "severity": "error", "code": "out_of_stock", "message": "Демонстраційного товару немає в наявності", "productId": "demo-eggs-c1-10" }
+      ],
+      "checkoutLinks": null
+    }
+  ]
+}
