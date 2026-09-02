@@ -315,7 +315,13 @@ export const VerifiedCartItemSchema = z.object({
 export type VerifiedCartItem = z.infer<typeof VerifiedCartItemSchema>;
 
 const httpsUrl = z.string().url().refine(
-  (value) => new URL(value).protocol === "https:",
+  (value) => {
+    try {
+      return new URL(value).protocol === "https:";
+    } catch {
+      return false;
+    }
+  },
   "checkout URL must use HTTPS",
 );
 

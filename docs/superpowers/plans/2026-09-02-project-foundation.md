@@ -174,7 +174,7 @@ Create `tsconfig.json`:
     "moduleResolution": "bundler",
     "resolveJsonModule": true,
     "isolatedModules": true,
-    "jsx": "preserve",
+    "jsx": "react-jsx",
     "incremental": true,
     "plugins": [{ "name": "next" }],
     "paths": {
@@ -478,6 +478,7 @@ Create `src/features/shared/contracts.test.ts`:
 
 ```ts
 import {
+  CheckoutLinksSchema,
   DraftSchema,
   NeedCandidateSchema,
   ProductCandidateSchema,
@@ -643,6 +644,17 @@ it("accepts checkout links only for a verified cart without errors", () => {
   ).toBe("verified");
 });
 
+it("returns a validation failure instead of throwing for malformed checkout URLs", () => {
+  const parseMalformedLinks = () =>
+    CheckoutLinksSchema.safeParse({
+      web: "not-a-url",
+      mobile: "https://example.test/app/cart",
+    });
+
+  expect(parseMalformedLinks).not.toThrow();
+  expect(parseMalformedLinks().success).toBe(false);
+});
+
 it("constructs typed success and failure results", () => {
   expect(ok(42)).toEqual({ ok: true, value: 42 });
   expect(
@@ -718,6 +730,12 @@ it("requires the public base URL", () => {
   delete source.PUBLIC_BASE_URL;
 
   expect(() => getServerEnv(source)).toThrow(/PUBLIC_BASE_URL/);
+});
+
+it("names PUBLIC_BASE_URL when the URL is malformed", () => {
+  expect(() => getServerEnv(validEnv({ PUBLIC_BASE_URL: "not-a-url" }))).toThrow(
+    /PUBLIC_BASE_URL/,
+  );
 });
 
 it("rejects invalid data mode", () => {
@@ -1137,7 +1155,13 @@ export const VerifiedCartItemSchema = z.object({
 export type VerifiedCartItem = z.infer<typeof VerifiedCartItemSchema>;
 
 const httpsUrl = z.string().url().refine(
-  (value) => new URL(value).protocol === "https:",
+  (value) => {
+    try {
+      return new URL(value).protocol === "https:";
+    } catch {
+      return false;
+    }
+  },
   "checkout URL must use HTTPS",
 );
 
@@ -1232,7 +1256,12 @@ const serverEnvSchema = z.object({
   DATA_MODE: z.enum(["live", "demo"]).default("live"),
   PUBLIC_BASE_URL: z.string().url(),
 }).strip().superRefine((value, context) => {
-  const protocol = new URL(value.PUBLIC_BASE_URL).protocol;
+  let protocol: string;
+  try {
+    protocol = new URL(value.PUBLIC_BASE_URL).protocol;
+  } catch {
+    return;
+  }
   if (protocol !== "http:" && protocol !== "https:") {
     context.addIssue({ code: "custom", path: ["PUBLIC_BASE_URL"], message: "must use HTTP or HTTPS" });
   }

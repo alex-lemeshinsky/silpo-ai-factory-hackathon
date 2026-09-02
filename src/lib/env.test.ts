@@ -50,6 +50,12 @@ it("requires the public base URL", () => {
   expect(() => getServerEnv(source)).toThrow(/PUBLIC_BASE_URL/);
 });
 
+it("names PUBLIC_BASE_URL when the URL is malformed", () => {
+  expect(() => getServerEnv(validEnv({ PUBLIC_BASE_URL: "not-a-url" }))).toThrow(
+    /PUBLIC_BASE_URL/,
+  );
+});
+
 it("rejects invalid data mode", () => {
   expect(() => getServerEnv(validEnv({ DATA_MODE: "automatic" }))).toThrow(/DATA_MODE/);
 });

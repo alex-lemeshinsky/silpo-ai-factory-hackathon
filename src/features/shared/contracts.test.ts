@@ -1,4 +1,5 @@
 import {
+  CheckoutLinksSchema,
   DraftSchema,
   NeedCandidateSchema,
   ProductCandidateSchema,
@@ -162,6 +163,17 @@ it("accepts checkout links only for a verified cart without errors", () => {
       checkoutLinks: { web: "https://example.test/cart", mobile: "https://example.test/app/cart" },
     }).status,
   ).toBe("verified");
+});
+
+it("returns a validation failure instead of throwing for malformed checkout URLs", () => {
+  const parseMalformedLinks = () =>
+    CheckoutLinksSchema.safeParse({
+      web: "not-a-url",
+      mobile: "https://example.test/app/cart",
+    });
+
+  expect(parseMalformedLinks).not.toThrow();
+  expect(parseMalformedLinks().success).toBe(false);
 });
 
 it("constructs typed success and failure results", () => {

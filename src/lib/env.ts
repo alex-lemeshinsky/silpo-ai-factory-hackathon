@@ -37,7 +37,12 @@ const serverEnvSchema = z.object({
   DATA_MODE: z.enum(["live", "demo"]).default("live"),
   PUBLIC_BASE_URL: z.string().url(),
 }).strip().superRefine((value, context) => {
-  const protocol = new URL(value.PUBLIC_BASE_URL).protocol;
+  let protocol: string;
+  try {
+    protocol = new URL(value.PUBLIC_BASE_URL).protocol;
+  } catch {
+    return;
+  }
   if (protocol !== "http:" && protocol !== "https:") {
     context.addIssue({ code: "custom", path: ["PUBLIC_BASE_URL"], message: "must use HTTP or HTTPS" });
   }

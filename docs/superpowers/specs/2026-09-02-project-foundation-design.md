@@ -113,7 +113,7 @@ Task 1 must not install Drizzle, AI SDK, MCP, database, or UI-component packages
 - `strict` is enabled.
 - `noEmit` is enabled for the typecheck path.
 - `moduleResolution` is compatible with the current Next.js App Router toolchain.
-- `jsx` uses the Next.js-compatible preserve setting.
+- `jsx` uses the JSX runtime selected by the installed Next.js toolchain. For Next.js 16.3.4 this is `react-jsx`; if a future supported Next.js release rewrites the setting, commit the generated value and update this specification in the same change.
 - `@/*` resolves to `./src/*`.
 - Next-generated TypeScript plugin settings and `.next/types/**/*.ts` include paths are retained.
 - ESLint checks JavaScript, TypeScript, and TSX source through the Next.js Core Web Vitals and TypeScript presets.
