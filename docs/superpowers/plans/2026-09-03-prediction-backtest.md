@@ -97,14 +97,14 @@ Setup and evidence belong to their task's commit, not separate implementation ta
 
 ### 5.1 — Confirm dependencies and create the behavioral fixture
 
-- [ ] Run `git status --short` and `git log -5 --oneline`; preserve unrelated work. Confirm the shared contracts include `NeedFeaturesSchema`, `NeedCandidateSchema`, and the completed normalizer.
-- [ ] Run the prerequisite gate:
+- [x] Run `git status --short` and `git log -5 --oneline`; preserve unrelated work. Confirm the shared contracts include `NeedFeaturesSchema`, `NeedCandidateSchema`, and the completed normalizer.
+- [x] Run the prerequisite gate:
 
 ```bash
 pnpm vitest run src/features/shared/contracts.test.ts src/lib/env.test.ts src/features/silpo/demo/demo-gateway.test.ts src/features/purchases/normalize.test.ts
 ```
 
-- [ ] Add this local helper and first test in `score.test.ts`. Fixtures are already normalized and do not invoke the normalizer, preventing a second algorithm from obscuring prediction failures.
+- [x] Add this local helper and first test in `score.test.ts`. Fixtures are already normalized and do not invoke the normalizer, preventing a second algorithm from obscuring prediction failures.
 
 ```ts
 import { describe, expect, it } from "vitest";
@@ -142,11 +142,11 @@ it("P5-02 abstains below three category observations", () => {
 });
 ```
 
-- [ ] Run the focused command. Expected red: unresolved `./score` import. Create `features.ts` and `score.ts` only after recording that failure.
+- [x] Run the focused command. Expected red: unresolved `./score` import. Create `features.ts` and `score.ts` only after recording that failure.
 
 ### 5.2 — Validate and collect observations
 
-- [ ] Add P5-01/P5-02 tests with the following exact cases. Use `buildCategoryHistory` directly for support and window assertions; do not rely on a coincidentally low confidence.
+- [x] Add P5-01/P5-02 tests with the following exact cases. Use `buildCategoryHistory` directly for support and window assertions; do not rely on a coincidentally low confidence.
 
 ```ts
 import { buildCategoryHistory } from "./features";
@@ -174,9 +174,9 @@ it("P5-02 duplicate lines and simultaneous receipts count once", () => {
 });
 ```
 
-- [ ] Add rejection assertions for malformed receipt fields, non-ISO date strings, invalid `Date`, blank active city, and repeated fingerprint; distinguish each from valid empty input. Add service rows deliberately labeled `water`, unknown categories, a null external ID, and ID `0`. Add equal instants encoded with different timezone offsets. Freeze input objects/arrays and confirm both reversed-input equality and no mutation.
-- [ ] Run the focused command. Expected red: missing collector or incorrect observation counts/window membership.
-- [ ] Implement `PREDICTION_CONFIG`, `PREDICTION_ALGORITHM_VERSION`, `DAY_MS`, validation, and `buildCategoryHistory` in `features.ts` according to P5-01–03. Copy input arrays, parse timestamps once, group with maps, and sort with an explicit comparator. Recompute weights from city, then coalesce simultaneous category observations using the maximum contributing weight. Retain each item's own weight and quantity for SKU support and P5-04.
+- [x] Add rejection assertions for malformed receipt fields, non-ISO date strings, invalid `Date`, blank active city, and repeated fingerprint; distinguish each from valid empty input. Add service rows deliberately labeled `water`, unknown categories, a null external ID, and ID `0`. Add equal instants encoded with different timezone offsets. Freeze input objects/arrays and confirm both reversed-input equality and no mutation.
+- [x] Run the focused command. Expected red: missing collector or incorrect observation counts/window membership.
+- [x] Implement `PREDICTION_CONFIG`, `PREDICTION_ALGORITHM_VERSION`, `DAY_MS`, validation, and `buildCategoryHistory` in `features.ts` according to P5-01–03. Copy input arrays, parse timestamps once, group with maps, and sort with an explicit comparator. Recompute weights from city, then coalesce simultaneous category observations using the maximum contributing weight. Retain each item's own weight and quantity for SKU support and P5-04.
 
 ```ts
 export const DAY_MS = 86_400_000;
@@ -196,11 +196,11 @@ export const PREDICTION_CONFIG = Object.freeze({
 } as const);
 ```
 
-- [ ] Rerun the focused command; collector and validation cases must pass. Keep scoring tests pending only until their named slice, never disabled.
+- [x] Rerun the focused command; collector and validation cases must pass. Keep scoring tests pending only until their named slice, never disabled.
 
 ### 5.3 — Extract robust features, familiar IDs, and quantities
 
-- [ ] Add the feature oracle before implementing extraction:
+- [x] Add the feature oracle before implementing extraction:
 
 ```ts
 import { extractCategoryFeatures } from "./features";
@@ -230,10 +230,10 @@ it("P5-03 uses even medians and MAD", () => {
 });
 ```
 
-- [ ] Add P5-03 tests for mixed active/other/null cities and whitespace/case normalization. Deliberately set `locationWeight: 1` on other-city receipts and assert recalculated weighted count `1.05`, share `0`, repeat `0.21`. Changing only active city must change the corresponding features without modifying the receipt weights. At a shared timestamp, include different SKUs from different cities and assert that a remote SKU retains weight `0.35` even when the category observation has weight `1.0`.
-- [ ] Add P5-04 fixtures: a one-observation SKU omitted; two-observation SKU retained; null omitted while ID `0` remains valid; equal counts ordered by recency then numeric ID; multiple line quantities summed once per timestamp; fractional quantity median preserved; one consistent familiar-SKU unit wins; mixed/null units with no compatible source return `1` and `quantityUncertain: true`.
-- [ ] Run the focused command. Expected red: absent extractor or wrong numerical/quantity values.
-- [ ] Implement `extractCategoryFeatures` using `buildCategoryHistory`, a nonmutating median helper, SKU histories, and the formulas in P5-03. Apply support before dividing by intervals. Use P5-04's ordered quantity decision exactly; do not multiply a historical amount by the due score.
+- [x] Add P5-03 tests for mixed active/other/null cities and whitespace/case normalization. Deliberately set `locationWeight: 1` on other-city receipts and assert recalculated weighted count `1.05`, share `0`, repeat `0.21`. Changing only active city must change the corresponding features without modifying the receipt weights. At a shared timestamp, include different SKUs from different cities and assert that a remote SKU retains weight `0.35` even when the category observation has weight `1.0`.
+- [x] Add P5-04 fixtures: a one-observation SKU omitted; two-observation SKU retained; null omitted while ID `0` remains valid; equal counts ordered by recency then numeric ID; multiple line quantities summed once per timestamp; fractional quantity median preserved; one consistent familiar-SKU unit wins; mixed/null units with no compatible source return `1` and `quantityUncertain: true`.
+- [x] Run the focused command. Expected red: absent extractor or wrong numerical/quantity values.
+- [x] Implement `extractCategoryFeatures` using `buildCategoryHistory`, a nonmutating median helper, SKU histories, and the formulas in P5-03. Apply support before dividing by intervals. Use P5-04's ordered quantity decision exactly; do not multiply a historical amount by the due score.
 
 ```ts
 // Local helpers in features.ts; callers supply nonempty finite values.
@@ -251,11 +251,11 @@ function clamp01(value: number): number {
 
 Inside the extractor, after constructing sorted observations, calculate intervals, their median, median absolute deviations, weighted count, and active share. Validate the final eight fields with `NeedFeaturesSchema`. An ineligible category is omitted; non-finite arithmetic is rejected.
 
-- [ ] Rerun the focused command until all extraction and quantity cases pass.
+- [x] Rerun the focused command until all extraction and quantity cases pass.
 
 ### 5.4 — Score, explain, and return stable candidates
 
-- [ ] Add the component and threshold tests:
+- [x] Add the component and threshold tests:
 
 ```ts
 it("P5-05 uses the agreed confidence weights", () => {
@@ -283,9 +283,9 @@ it("P5-06 P5-07 emits explainable schema-valid weekly needs", () => {
 });
 ```
 
-- [ ] Add invalid-component tests for `NaN` and infinities, out-of-range band input, the day-14 `0.46` abstention, other-city `0.7235` medium result, score ties between `bread` and `water`, and every optional reason condition/order. Assert algorithm version equals `prediction-v1`. Assert reversed receipt/item input yields identical candidates.
-- [ ] Run the focused command. Expected red: score, band, reason, or ordering mismatch.
-- [ ] Implement scoring as the weighted clamped sum from `PREDICTION_CONFIG`; map a valid candidate's exact features into that function. Build reasons using the ordered P5-06 table. Filter null bands, parse with `NeedCandidateSchema`, and sort descending confidence then ascending category key.
+- [x] Add invalid-component tests for `NaN` and infinities, out-of-range band input, the day-14 `0.46` abstention, other-city `0.7235` medium result, score ties between `bread` and `water`, and every optional reason condition/order. Assert algorithm version equals `prediction-v1`. Assert reversed receipt/item input yields identical candidates.
+- [x] Run the focused command. Expected red: score, band, reason, or ordering mismatch.
+- [x] Implement scoring as the weighted clamped sum from `PREDICTION_CONFIG`; map a valid candidate's exact features into that function. Build reasons using the ordered P5-06 table. Filter null bands, parse with `NeedCandidateSchema`, and sort descending confidence then ascending category key.
 
 ```ts
 // score.ts: comparator used after candidate validation.
@@ -297,11 +297,11 @@ function compareCategoryKeys(a: string, b: string): number {
 //   b.confidence - a.confidence || compareCategoryKeys(a.categoryKey, b.categoryKey));
 ```
 
-- [ ] Rerun all Task 5 tests. Remove no acceptance cases to make the suite green.
+- [x] Rerun all Task 5 tests. Remove no acceptance cases to make the suite green.
 
 ### 5.5 — Verify, review, and commit Task 5
 
-- [ ] Run the focused command from a fresh invocation, then cumulative/static gates:
+- [x] Run the focused command from a fresh invocation, then cumulative/static gates:
 
 ```bash
 pnpm vitest run src/features/prediction/score.test.ts
@@ -312,8 +312,8 @@ git diff --check
 git diff -- src/features/prediction
 ```
 
-- [ ] Inspect imports for purity, outputs for shared-schema conformance, reason codes for unsupported claims, and numeric tests for independent expected values. Check every P5 requirement against the traceability table below.
-- [ ] Stage only the three Task 5 files and commit:
+- [x] Inspect imports for purity, outputs for shared-schema conformance, reason codes for unsupported claims, and numeric tests for independent expected values. Check every P5 requirement against the traceability table below.
+- [x] Stage only the three Task 5 files and commit:
 
 ```bash
 git add src/features/prediction/features.ts src/features/prediction/score.ts src/features/prediction/score.test.ts
@@ -321,7 +321,7 @@ git commit -m "feat: score replenishment needs"
 git rev-parse HEAD
 ```
 
-- [ ] Complete spec review, then code-quality review; resolve findings within the task's focused commit. The controller reruns focused and cumulative tests before integrating and marking Task 5's backlog checkboxes. Do not begin Task 6 until that gate is met.
+- [x] Complete spec review, then code-quality review; resolve findings within the task's focused commit. The controller reruns focused and cumulative tests before integrating and marking Task 5's backlog checkboxes. Do not begin Task 6 until that gate is met.
 
 ---
 
@@ -340,8 +340,8 @@ pnpm vitest run src/features/diagnostics/backtest-service.test.ts src/app/api/ba
 
 ### 6.1 — Create evaluator fixtures and the causal red test
 
-- [ ] Verify clean task scope and the Task 5 hash. Run its focused tests before writing the evaluator.
-- [ ] Create this independent fixture in `backtest.test.ts`. Do not import a helper from another test module or an unvalidated raw JSON fixture.
+- [x] Verify clean task scope and the Task 5 hash. Run its focused tests before writing the evaluator.
+- [x] Create this independent fixture in `backtest.test.ts`. Do not import a helper from another test module or an unvalidated raw JSON fixture.
 
 ```ts
 import { expect, it, vi } from "vitest";
@@ -385,13 +385,13 @@ it("B6-02 passes strictly prior history to the production predictor", () => {
 });
 ```
 
-- [ ] Run the evaluator command. Expected red: missing evaluator import.
-- [ ] Add B6-01 input rejection cases for a blank active city, missing options, an invalid receipt timestamp, and duplicate fingerprints. Verify that `[]` with a valid explicit city is accepted; invalid input must not be converted into an empty successful report.
-- [ ] Add the local Zod report schemas and `BacktestOptions` from B6-07, then implement numeric chronological ordering and strictly prior folds. Use `new Date(T - 1).toISOString()` for metadata and the actual target time for inference. Do not use the last training timestamp as the prediction time.
+- [x] Run the evaluator command. Expected red: missing evaluator import.
+- [x] Add B6-01 input rejection cases for a blank active city, missing options, an invalid receipt timestamp, and duplicate fingerprints. Verify that `[]` with a valid explicit city is accepted; invalid input must not be converted into an empty successful report.
+- [x] Add the local Zod report schemas and `BacktestOptions` from B6-07, then implement numeric chronological ordering and strictly prior folds. Use `new Date(T - 1).toISOString()` for metadata and the actual target time for inference. Do not use the last training timestamp as the prediction time.
 
 ### 6.2 — Define target sets and metric aggregation
 
-- [ ] Add the complete hand-calculated oracle assertions:
+- [x] Add the complete hand-calculated oracle assertions:
 
 ```ts
 it("B6-04 B6-08 includes cold starts and uses fixed-K macro metrics", () => {
@@ -419,10 +419,10 @@ it("B6-04 distinguishes an empty denominator from no hits", () => {
 });
 ```
 
-- [ ] Add B6-03 cases with repeated target lines, five actual categories, null-ID targets, service-only/unknown-only receipts, needs without preferred IDs, duplicate preferred IDs across needs, and long replacement lists. For synthetic candidate-selection tests, stub only `inferNeeds` with schema-valid candidates and separately assert it receives prior-only data; retain the real-predictor oracle above.
-- [ ] Add a macro-recall oracle with two eligible windows whose recalls are `1` and `0.2`: the aggregate must be `0.6`, not the micro value `2/6`. Exact-only missing ground truth must not remove a category window.
-- [ ] Run the evaluator command; expected red is a concrete selection or denominator mismatch.
-- [ ] Implement set intersection counts and fixed-K selection exactly as B6-03. Aggregate nullable per-window ratios with this local helper, using category-eligible and exact-eligible windows separately:
+- [x] Add B6-03 cases with repeated target lines, five actual categories, null-ID targets, service-only/unknown-only receipts, needs without preferred IDs, duplicate preferred IDs across needs, and long replacement lists. For synthetic candidate-selection tests, stub only `inferNeeds` with schema-valid candidates and separately assert it receives prior-only data; retain the real-predictor oracle above.
+- [x] Add a macro-recall oracle with two eligible windows whose recalls are `1` and `0.2`: the aggregate must be `0.6`, not the micro value `2/6`. Exact-only missing ground truth must not remove a category window.
+- [x] Run the evaluator command; expected red is a concrete selection or denominator mismatch.
+- [x] Implement set intersection counts and fixed-K selection exactly as B6-03. Aggregate nullable per-window ratios with this local helper, using category-eligible and exact-eligible windows separately:
 
 ```ts
 function meanOrNull(values: number[]): number | null {
@@ -434,13 +434,13 @@ function meanOrNull(values: number[]): number | null {
 
 For category precision, average `window.prediction.categoryHits / 3` over every evaluated window. For category recall, average hits divided by `actualCategoryCount`. For exact metrics, first keep windows with `actualExternalProductCount > 0`. Compute receipt hit rate and coverage from category booleans across all evaluated windows. Use the same aggregation function with `window.baseline` for baseline results.
 
-- [ ] Rerun the evaluator command; confirm explicit zero and null cases both pass.
+- [x] Rerun the evaluator command; confirm explicit zero and null cases both pass.
 
 ### 6.3 — Baseline, calibration, and leakage resistance
 
-- [ ] Add B6-06 baseline assertions from the four-receipt oracle: exact precision `1/6`, exact recall `0.5`, category precision `1/12`, category recall/hit rate/coverage `0.25`.
-- [ ] Add a baseline boundary fixture at target day 180: occurrences at days `89.999`, `90`, and `97`. The just-before-90-day event cannot contribute to baseline support; the exact lower boundary can. Add future high-frequency SKUs and assert earlier predictions/baseline rankings are unchanged. Test weighted frequency and ties separately from due/MAD behavior.
-- [ ] Add the calibration oracle:
+- [x] Add B6-06 baseline assertions from the four-receipt oracle: exact precision `1/6`, exact recall `0.5`, category precision `1/12`, category recall/hit rate/coverage `0.25`.
+- [x] Add a baseline boundary fixture at target day 180: occurrences at days `89.999`, `90`, and `97`. The just-before-90-day event cannot contribute to baseline support; the exact lower boundary can. Add future high-frequency SKUs and assert earlier predictions/baseline rankings are unchanged. Test weighted frequency and ties separately from due/MAD behavior.
+- [x] Add the calibration oracle:
 
 ```ts
 it("B6-05 calibrates emitted categories and retains empty buckets", () => {
@@ -458,16 +458,16 @@ it("B6-05 calibrates emitted categories and retains empty buckets", () => {
 });
 ```
 
-- [ ] Add equal-time target receipts, reordered inputs, timezone-equivalent dates, exact 180-day boundary, target-item mutation, and frozen inputs. Compare the affected window's `prediction` and `baseline` after target mutation; metrics may change because labels changed. For future poisoning, compare all preexisting windows only, because appending targets legitimately changes aggregate metrics.
-- [ ] Run the evaluator command. Expected red: baseline support/rank, bucket, or temporal-invariance mismatch.
-- [ ] Implement baseline by filtering normalized training receipts to 90 days before building histories; count category observations and distinct timestamps per external ID with recomputed weights. For the baseline's global SKU ranking, combine any occurrences across categories by ID and timestamp, taking the maximum contributing item weight at that timestamp. Apply the support minima, take top three with deterministic ties, and give baseline category rows `confidence: null`.
-- [ ] Implement two confidence buckets using only selected model category predictions. Use `toConfidenceBand` and `meanOrNull`; observed frequency is bucket hits/count. Validate the final report with `BacktestReportSchema`.
-- [ ] Add B6-07 schema rejection tests by mutating a known-valid report: extra raw receipt field; count/window mismatch; cutoff equal to test time; hit greater than actual/predicted count; baseline confidence non-null; model confidence below threshold; bucket support mismatch; zero support with numeric means. Assert each mutation rejects.
-- [ ] Rerun evaluator plus Task 5 tests. The oracle and leakage checks must all pass before introducing the service.
+- [x] Add equal-time target receipts, reordered inputs, timezone-equivalent dates, exact 180-day boundary, target-item mutation, and frozen inputs. Compare the affected window's `prediction` and `baseline` after target mutation; metrics may change because labels changed. For future poisoning, compare all preexisting windows only, because appending targets legitimately changes aggregate metrics.
+- [x] Run the evaluator command. Expected red: baseline support/rank, bucket, or temporal-invariance mismatch.
+- [x] Implement baseline by filtering normalized training receipts to 90 days before building histories; count category observations and distinct timestamps per external ID with recomputed weights. For the baseline's global SKU ranking, combine any occurrences across categories by ID and timestamp, taking the maximum contributing item weight at that timestamp. Apply the support minima, take top three with deterministic ties, and give baseline category rows `confidence: null`.
+- [x] Implement two confidence buckets using only selected model category predictions. Use `toConfidenceBand` and `meanOrNull`; observed frequency is bucket hits/count. Validate the final report with `BacktestReportSchema`.
+- [x] Add B6-07 schema rejection tests by mutating a known-valid report: extra raw receipt field; count/window mismatch; cutoff equal to test time; hit greater than actual/predicted count; baseline confidence non-null; model confidence below threshold; bucket support mismatch; zero support with numeric means. Assert each mutation rejects.
+- [x] Rerun evaluator plus Task 5 tests. The oracle and leakage checks must all pass before introducing the service.
 
 ### 6.4 — Application service with an injected, read-only gateway
 
-- [ ] Create `backtest-service.test.ts` with Node test environment (`// @vitest-environment node` on its first line). Use a fresh real demo adapter per test, and spy on its methods. This keeps port parity and fixture validation active without live calls.
+- [x] Create `backtest-service.test.ts` with Node test environment (`// @vitest-environment node` on its first line). Use a fresh real demo adapter per test, and spy on its methods. This keeps port parity and fixture validation active without live calls.
 
 ```ts
 import { expect, it, vi } from "vitest";
@@ -494,9 +494,9 @@ it("B6-09 evaluates the actual synthetic fixture using only allowed reads", asyn
 });
 ```
 
-- [ ] Also spy on every remaining gateway method and require zero calls. Add typed mocked `needs_slot` context with no history call, null/blank city, empty history, schema-invalid data, duplicate source IDs, a corpus over 180 days, adjacent receipts within four hours, and a thrown error containing a synthetic secret sentinel. Assert safe code/message/correlation ID and absence of the sentinel.
-- [ ] Run the service command. Expected red: missing service or missing validation/short-circuit.
-- [ ] Implement `loadDemoBacktest(gateway, correlationId)` returning `Result<BacktestReport, AppError>`. Reuse `ok`/`err`, schemas, and the normalizer. Sort a copy of raw history for B6-09's corpus checks, require unique source IDs, derive cutoff from the maximum receipt timestamp, normalize once only after the preconditions pass, then call the evaluator with the context's explicit city.
+- [x] Also spy on every remaining gateway method and require zero calls. Add typed mocked `needs_slot` context with no history call, null/blank city, empty history, schema-invalid data, duplicate source IDs, a corpus over 180 days, adjacent receipts within four hours, and a thrown error containing a synthetic secret sentinel. Assert safe code/message/correlation ID and absence of the sentinel.
+- [x] Run the service command. Expected red: missing service or missing validation/short-circuit.
+- [x] Implement `loadDemoBacktest(gateway, correlationId)` returning `Result<BacktestReport, AppError>`. Reuse `ok`/`err`, schemas, and the normalizer. Sort a copy of raw history for B6-09's corpus checks, require unique source IDs, derive cutoff from the maximum receipt timestamp, normalize once only after the preconditions pass, then call the evaluator with the context's explicit city.
 
 ```ts
 // The error constructors in this module never receive exception.message.
@@ -509,12 +509,12 @@ const messages = {
 
 Use `needs_slot` for the known context result, `invalid_external_data` for schema or corpus rejection, and `unexpected` for other dependency failures. Set `retryAfterMs: null`. Do not introduce retries or broad exception text logging.
 
-- [ ] Run service and evaluator tests together. Change the mocked system date and assert a byte-equivalent report to prove snapshot-relative evaluation.
+- [x] Run service and evaluator tests together. Change the mocked system date and assert a byte-equivalent report to prove snapshot-relative evaluation.
 
 ### 6.5 — Demo-only route and response tests
 
-- [ ] Create `route.test.ts` with `// @vitest-environment node`. Mock `getServerEnv`, `createDemoSilpoGateway`, and `loadDemoBacktest` at module boundaries. Tests must use typed synthetic configuration; they never modify or print real environment values.
-- [ ] Add the live-mode denial test before the route implementation:
+- [x] Create `route.test.ts` with `// @vitest-environment node`. Mock `getServerEnv`, `createDemoSilpoGateway`, and `loadDemoBacktest` at module boundaries. Tests must use typed synthetic configuration; they never modify or print real environment values.
+- [x] Add the live-mode denial test before the route implementation:
 
 ```ts
 import { beforeEach, expect, it, vi } from "vitest";
@@ -549,10 +549,10 @@ it("B6-10 denies live mode before constructing any gateway", async () => {
 });
 ```
 
-- [ ] Add demo success using `runRollingBacktest([], { activeCity: "Київ" })` as a schema-valid report fixture and a typed mock port obtained with `vi.importActual` of the demo adapter. Return `ok(report)` from the mocked service. Assert `200`, `{ mode: "demo", report }`, no-store, one factory call, and one service call with that gateway and a nonempty correlation ID.
-- [ ] Add `needs_slot → 409`, `invalid_external_data → 500`, `unexpected → 500`, configuration throw, and factory/service throw tests. Use a synthetic secret sentinel in thrown messages and assert it is absent from response text. Assert no-store for every status. Call GET first in live mode and then demo mode to prove mode is read per request rather than cached at import.
-- [ ] Run the route command. Expected red: missing route or concrete HTTP/mode behavior mismatch.
-- [ ] Implement the route with the following composition shape; use platform `Response.json` and the existing result contract, with safe error mapping from B6-10:
+- [x] Add demo success using `runRollingBacktest([], { activeCity: "Київ" })` as a schema-valid report fixture and a typed mock port obtained with `vi.importActual` of the demo adapter. Return `ok(report)` from the mocked service. Assert `200`, `{ mode: "demo", report }`, no-store, one factory call, and one service call with that gateway and a nonempty correlation ID.
+- [x] Add `needs_slot → 409`, `invalid_external_data → 500`, `unexpected → 500`, configuration throw, and factory/service throw tests. Use a synthetic secret sentinel in thrown messages and assert it is absent from response text. Assert no-store for every status. Call GET first in live mode and then demo mode to prove mode is read per request rather than cached at import.
+- [x] Run the route command. Expected red: missing route or concrete HTTP/mode behavior mismatch.
+- [x] Implement the route with the following composition shape; use platform `Response.json` and the existing result contract, with safe error mapping from B6-10:
 
 ```ts
 export const dynamic = "force-dynamic";
@@ -562,11 +562,11 @@ const headers = { "Cache-Control": "no-store" };
 
 `GET(): Promise<Response>` generates one UUID, reads `getServerEnv`, returns live 404 before gateway creation, constructs a demo gateway, awaits `loadDemoBacktest`, and maps success or typed errors. A catch block returns a safe `unexpected` AppError with that UUID. It must not include error contents or compute any metric. It exports no extra framework-unsupported route handlers or configuration keys.
 
-- [ ] Run route and service tests together; confirm all mock call-count assertions pass.
+- [x] Run route and service tests together; confirm all mock call-count assertions pass.
 
 ### 6.6 — Final verification, reviews, and commit
 
-- [ ] Run focused and cumulative checks from fresh invocations:
+- [x] Run focused and cumulative checks from fresh invocations:
 
 ```bash
 pnpm vitest run src/features/prediction/score.test.ts src/features/prediction/backtest.test.ts
@@ -581,8 +581,8 @@ git diff -- src/features/prediction src/features/diagnostics src/app/api/backtes
 
 Expected: all commands exit zero; build lists `/api/backtest` as dynamic and needs no real credentials during module import. Browser, responsive, model, and live-write tests are inapplicable to these files. Do not report them as run.
 
-- [ ] Review every B6 requirement against the mapping below. Inspect exports/imports, report privacy, schema consistency, denominator handling, and the dependency boundary. Confirm no fixture, shared-contract, package, or normalization edits slipped into Task 6.
-- [ ] Commit only the Task 6 files:
+- [x] Review every B6 requirement against the mapping below. Inspect exports/imports, report privacy, schema consistency, denominator handling, and the dependency boundary. Confirm no fixture, shared-contract, package, or normalization edits slipped into Task 6.
+- [x] Commit only the Task 6 files:
 
 ```bash
 git add src/features/prediction/backtest.ts src/features/prediction/backtest.test.ts src/features/diagnostics/backtest-service.ts src/features/diagnostics/backtest-service.test.ts src/app/api/backtest/route.ts src/app/api/backtest/route.test.ts
@@ -590,7 +590,7 @@ git commit -m "feat: add rolling prediction backtest"
 git rev-parse HEAD
 ```
 
-- [ ] Complete spec review, code-quality review, fixes, and controller rerun before marking Task 6 complete. Report changed files, command results, exact commit hash, synthetic-corpus limitations, and any remaining operational dependency. Task 17 can consume the validated report; it must not recalculate the metrics in UI code.
+- [x] Complete spec review, code-quality review, fixes, and controller rerun before marking Task 6 complete. Report changed files, command results, exact commit hash, synthetic-corpus limitations, and any remaining operational dependency. Task 17 can consume the validated report; it must not recalculate the metrics in UI code.
 
 ## Requirement-to-step traceability
 

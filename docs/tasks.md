@@ -423,7 +423,7 @@ git commit -m "feat: normalize purchase history"
 - Consumes: `NormalizedReceipt[]`, active date, active city.
 - Produces: `inferNeeds({ receipts, now, activeCity }): NeedCandidate[]`, `scoreNeed`, `toConfidenceBand`, pure observation/feature helpers, and versioned prediction configuration. See the detailed spec for exact signatures and formulas; shared contracts remain unchanged.
 
-- [ ] **Step 1: Write failing scoring tests**
+- [x] **Step 1: Write failing scoring tests**
 
 ```ts
 it("abstains below three category observations", () => {
@@ -439,16 +439,16 @@ it("labels 0.75 as high confidence", () => {
 });
 ```
 
-- [ ] **Step 2: Confirm failure**
+- [x] **Step 2: Confirm failure**
 
 Run: `pnpm vitest run src/features/prediction/score.test.ts`
 Expected: FAIL because scoring functions do not exist.
 
-- [ ] **Step 3: Implement features and score**
+- [x] **Step 3: Implement features and score**
 
 Use median interval, median absolute deviation, weighted count, days since last purchase, and typical quantity. Clamp the due/repeat/stability score components to 0–1, without clamping counts or intervals. Filter history older than 180 days, future receipts, and results below 0.55. Sort by descending confidence and then category key for deterministic ties. Implement P5-01 through P5-07 in the detailed spec, including observation support, compatible quantities, reason codes, and runtime validation.
 
-- [ ] **Step 4: Verify and commit**
+- [x] **Step 4: Verify and commit**
 
 Run: `pnpm vitest run src/features/prediction/score.test.ts && pnpm typecheck`
 Expected: PASS.
@@ -484,7 +484,7 @@ The application service and route test refine the original file list to preserve
 
 The required city refines the earlier one-argument sketch; deriving it from future receipts or old location weights is not permitted. No frozen shared contract changes are required.
 
-- [ ] **Step 1: Write the failing no-leakage test**
+- [x] **Step 1: Write the failing no-leakage test**
 
 ```ts
 it("never trains on the receipt being predicted", () => {
@@ -495,16 +495,16 @@ it("never trains on the receipt being predicted", () => {
 
 Also assert actual predictor input timestamps, equal-time exclusion, and future-poisoning invariance; cutoff metadata alone is insufficient evidence.
 
-- [ ] **Step 2: Confirm failure**
+- [x] **Step 2: Confirm failure**
 
 Run: `pnpm vitest run src/features/prediction/backtest.test.ts`
 Expected: FAIL because the evaluator does not exist.
 
-- [ ] **Step 3: Implement metrics**
+- [x] **Step 3: Implement metrics**
 
 Return exact-SKU precision/recall, category precision@3, category recall@3, hit rate, coverage, confidence buckets, and the 90-day most-frequent baseline. Follow B6-01 through B6-10 for fixed-K macro denominators, cold starts, explicit nulls, corpus validation, calibration, and report versioning. The application service loads and validates synthetic history; the thin route returns 404 in live mode and a labeled, non-cacheable report in demo mode. Do not perform live, model, database, or cart-write operations.
 
-- [ ] **Step 4: Verify and commit**
+- [x] **Step 4: Verify and commit**
 
 Run: `pnpm vitest run src/features/prediction/backtest.test.ts src/features/diagnostics/backtest-service.test.ts src/app/api/backtest/route.test.ts`
 Expected: PASS with finite numeric metrics in 0–1 and `null` when a denominator is missing. Then run the cumulative/static/build gates in the implementation plan.
