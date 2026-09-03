@@ -363,7 +363,7 @@ git commit -m "feat: add anonymized demo gateway"
 - Consumes: `RawPurchaseReceipt[]`.
 - Produces: `normalizePurchases(receipts, activeCity, cutoff): NormalizedReceipt[]`.
 
-- [ ] **Step 1: Write failing normalization tests**
+- [x] **Step 1: Write failing normalization tests**
 
 ```ts
 it("deduplicates an online order and matching loyalty receipt", () => {
@@ -382,21 +382,21 @@ it("assigns weight 0.35 outside the active city", () => {
 });
 ```
 
-- [ ] **Step 2: Confirm failure**
+- [x] **Step 2: Confirm failure**
 
 Run: `pnpm vitest run src/features/purchases/normalize.test.ts`
 Expected: FAIL because `normalizePurchases` does not exist.
 
-- [ ] **Step 3: Implement deterministic normalization**
+- [x] **Step 3: Implement deterministic normalization**
 
 Deduplicate when receipts are within four hours, totals differ by no more than one hryvnia, and at least 70% of external product IDs overlap. Use a category rule table before any LLM fallback. Store unknown category as `uncategorized`; never guess it inside this module.
 
-- [ ] **Step 4: Verify**
+- [x] **Step 4: Verify**
 
 Run: `pnpm vitest run src/features/purchases/normalize.test.ts`
 Expected: PASS for duplicates, exclusions, units, cutoff, and city weighting.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/features/purchases

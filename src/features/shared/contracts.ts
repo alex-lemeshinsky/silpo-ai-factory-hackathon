@@ -62,8 +62,9 @@ export const NormalizedReceiptSchema = z.object({
   purchasedAt: isoDateTime,
   city: nonEmptyString.nullable(),
   total: finiteNonNegative,
+  locationWeight: z.number().finite().min(0).max(1),
   externalFingerprint: nonEmptyString,
-  items: z.array(NormalizedPurchaseItemSchema).min(1),
+  items: z.array(NormalizedPurchaseItemSchema),
 }).strict();
 export type NormalizedReceipt = z.infer<typeof NormalizedReceiptSchema>;
 
