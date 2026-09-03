@@ -63,6 +63,27 @@ describe("backtest-service", () => {
     expect(historyRead).not.toHaveBeenCalled();
   });
 
+  it("rejects a malformed needs_slot envelope before branching", async () => {
+    const gateway = createDemoSilpoGateway();
+    vi.spyOn(gateway, "loadCartContext").mockResolvedValue({
+      status: "needs_slot",
+      availableSlots: "malformed",
+    } as unknown as CartContextResult);
+    const historyRead = vi.spyOn(gateway, "loadPurchaseHistory");
+
+    const result = await loadDemoBacktest(gateway, "corr-malformed-slot");
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("Expected failure");
+    expect(result.error).toEqual({
+      code: "invalid_external_data",
+      message: "Не вдалося перевірити демонстраційні дані.",
+      correlationId: "corr-malformed-slot",
+      retryAfterMs: null,
+    });
+    expect(historyRead).not.toHaveBeenCalled();
+  });
+
   it("rejects null or blank city in cart context", async () => {
     const gateway = createDemoSilpoGateway();
     const baseContext = (await gateway.loadCartContext()) as {

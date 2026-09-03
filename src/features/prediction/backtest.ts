@@ -7,18 +7,19 @@ import {
 import { isServiceItem } from "@/features/purchases/categorize";
 import {
   DAY_MS,
+  PREDICTION_ALGORITHM_VERSION,
   PREDICTION_CONFIG,
   buildCategoryHistory,
   compareCategoryKeys,
 } from "./features";
 import { inferNeeds, toConfidenceBand } from "./score";
 
-export const BACKTEST_ALGORITHM_VERSION = "prediction-v1" as const;
-export const BACKTEST_EVALUATION_VERSION = "rolling-v1" as const;
+export const BACKTEST_ALGORITHM_VERSION = PREDICTION_ALGORITHM_VERSION;
+export const BACKTEST_EVALUATION_VERSION = "rolling-v2" as const;
 export const BACKTEST_BASELINE_VERSION = "frequency-90d-v1" as const;
 export const BACKTEST_CATEGORY_K = 3 as const;
 export const BACKTEST_EXACT_K = 3 as const;
-export const BACKTEST_HISTORY_WINDOW_DAYS = 180 as const;
+export const BACKTEST_HISTORY_WINDOW_DAYS = PREDICTION_CONFIG.historyWindowDays;
 export const BACKTEST_BASELINE_WINDOW_DAYS = 90 as const;
 
 const finiteZeroToOne = z.number().finite().min(0).max(1);
@@ -39,6 +40,7 @@ export const WindowCategoryPredictionSchema = z
   .object({
     categoryKey: z.string().trim().min(1),
     confidence: finiteZeroToOne.nullable(),
+    hit: z.boolean(),
   })
   .strict();
 export type WindowCategoryPrediction = z.infer<
@@ -132,6 +134,10 @@ export const BacktestReportSchema = z
     }
 
     let totalModelCategoryPredictions = 0;
+    const expectedBucketEvidence = {
+      medium: { confidences: [] as number[], hits: [] as number[] },
+      high: { confidences: [] as number[], hits: [] as number[] },
+    };
 
     for (let i = 0; i < data.windows.length; i++) {
       const w = data.windows[i];
@@ -165,6 +171,13 @@ export const BacktestReportSchema = z
             message: `Model category prediction confidence must be in [${PREDICTION_CONFIG.minimumConfidence}, 1]`,
             path: ["windows", i, "prediction", "categories", c, "confidence"],
           });
+        } else {
+          const band =
+            cat.confidence >= PREDICTION_CONFIG.highConfidence
+              ? "high"
+              : "medium";
+          expectedBucketEvidence[band].confidences.push(cat.confidence);
+          expectedBucketEvidence[band].hits.push(cat.hit ? 1 : 0);
         }
       }
       totalModelCategoryPredictions += w.prediction.categories.length;
@@ -231,6 +244,16 @@ export const BacktestReportSchema = z
         });
       }
       if (
+        w.prediction.categoryHits !==
+        w.prediction.categories.filter((category) => category.hit).length
+      ) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "prediction.categoryHits must match category hit flags",
+          path: ["windows", i, "prediction", "categoryHits"],
+        });
+      }
+      if (
         w.prediction.exactSkuHits > w.prediction.externalProductIds.length ||
         w.prediction.exactSkuHits > w.actualExternalProductCount
       ) {
@@ -249,6 +272,16 @@ export const BacktestReportSchema = z
           code: z.ZodIssueCode.custom,
           message:
             "baseline.categoryHits cannot exceed predictions or actual categories",
+          path: ["windows", i, "baseline", "categoryHits"],
+        });
+      }
+      if (
+        w.baseline.categoryHits !==
+        w.baseline.categories.filter((category) => category.hit).length
+      ) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "baseline.categoryHits must match category hit flags",
           path: ["windows", i, "baseline", "categoryHits"],
         });
       }
@@ -294,6 +327,41 @@ export const BacktestReportSchema = z
 
     for (let b = 0; b < data.confidenceBuckets.length; b++) {
       const bucket = data.confidenceBuckets[b];
+      const expectedBand = b === 0 ? "medium" : "high";
+      const expectedEvidence = expectedBucketEvidence[expectedBand];
+      const expectedCount = expectedEvidence.confidences.length;
+      const expectedMean = meanOrNull(expectedEvidence.confidences);
+      const expectedFrequency = meanOrNull(expectedEvidence.hits);
+
+      if (bucket.predictionCount !== expectedCount) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `${expectedBand} bucket predictionCount must match window predictions`,
+          path: ["confidenceBuckets", b, "predictionCount"],
+        });
+      }
+
+      const valuesMatch = (actual: number | null, expected: number | null) =>
+        actual === expected ||
+        (actual !== null &&
+          expected !== null &&
+          Math.abs(actual - expected) <= 1e-12);
+
+      if (!valuesMatch(bucket.meanConfidence, expectedMean)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `${expectedBand} bucket meanConfidence must match window predictions`,
+          path: ["confidenceBuckets", b, "meanConfidence"],
+        });
+      }
+      if (!valuesMatch(bucket.observedFrequency, expectedFrequency)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `${expectedBand} bucket observedFrequency must match category hit flags`,
+          path: ["confidenceBuckets", b, "observedFrequency"],
+        });
+      }
+
       if (bucket.predictionCount === 0) {
         if (
           bucket.meanConfidence !== null ||
@@ -428,7 +496,11 @@ function computeBaselineWindow(
 
   const selectedCategories: WindowCategoryPrediction[] = eligibleCategories
     .slice(0, BACKTEST_CATEGORY_K)
-    .map((c) => ({ categoryKey: c.categoryKey, confidence: null }));
+    .map((c) => ({
+      categoryKey: c.categoryKey,
+      confidence: null,
+      hit: actualCategories.has(c.categoryKey),
+    }));
 
   // Global SKU ranking across categories
   const skuTimestampMap = new Map<number, Map<number, number>>();
@@ -473,9 +545,7 @@ function computeBaselineWindow(
     .slice(0, BACKTEST_EXACT_K)
     .map((s) => s.skuId);
 
-  const categoryHits = selectedCategories.filter((c) =>
-    actualCategories.has(c.categoryKey),
-  ).length;
+  const categoryHits = selectedCategories.filter((c) => c.hit).length;
   const exactSkuHits = selectedSkuIds.filter((id) =>
     actualProducts.has(id),
   ).length;
@@ -652,7 +722,11 @@ export function runRollingBacktest(
 
     const predCategories: WindowCategoryPrediction[] = needs
       .slice(0, BACKTEST_CATEGORY_K)
-      .map((n) => ({ categoryKey: n.categoryKey, confidence: n.confidence }));
+      .map((n) => ({
+        categoryKey: n.categoryKey,
+        confidence: n.confidence,
+        hit: actualCategories.has(n.categoryKey),
+      }));
 
     const predSkuIds: number[] = [];
     for (const need of needs) {
@@ -672,9 +746,7 @@ export function runRollingBacktest(
       }
     }
 
-    const predCatHits = predCategories.filter((c) =>
-      actualCategories.has(c.categoryKey),
-    ).length;
+    const predCatHits = predCategories.filter((c) => c.hit).length;
     const predSkuHits = predSkuIds.filter((id) =>
       actualProducts.has(id),
     ).length;
@@ -690,7 +762,7 @@ export function runRollingBacktest(
     for (const cat of predCategories) {
       if (cat.confidence !== null) {
         const band = toConfidenceBand(cat.confidence);
-        const hit = actualCategories.has(cat.categoryKey) ? 1 : 0;
+        const hit = cat.hit ? 1 : 0;
         if (band === "medium") {
           mediumConfidences.push(cat.confidence);
           mediumHits.push(hit);

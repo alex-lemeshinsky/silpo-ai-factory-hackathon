@@ -1,5 +1,4 @@
 import { getServerEnv } from "@/lib/env";
-import { createDemoSilpoGateway } from "@/features/silpo/demo/demo-gateway";
 import { loadDemoBacktest } from "@/features/diagnostics/backtest-service";
 import type { AppError } from "@/lib/result";
 
@@ -18,6 +17,9 @@ export async function GET(): Promise<Response> {
       return Response.json({ error: "not_found" }, { status: 404, headers });
     }
 
+    const { createDemoSilpoGateway } = await import(
+      "@/features/silpo/demo/demo-gateway"
+    );
     const gateway = createDemoSilpoGateway();
     const result = await loadDemoBacktest(gateway, correlationId);
 

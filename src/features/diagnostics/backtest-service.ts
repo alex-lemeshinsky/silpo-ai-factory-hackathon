@@ -1,5 +1,5 @@
 import {
-  CartContextSchema,
+  CartContextResultSchema,
   RawPurchaseReceiptSchema,
   type SilpoGateway,
 } from "@/features/shared/contracts";
@@ -24,8 +24,19 @@ export async function loadDemoBacktest(
   correlationId: string,
 ): Promise<Result<BacktestReport, AppError>> {
   try {
-    const contextResult = await gateway.loadCartContext();
+    const parsedContext = CartContextResultSchema.safeParse(
+      await gateway.loadCartContext(),
+    );
+    if (!parsedContext.success) {
+      return err({
+        code: "invalid_external_data",
+        message: messages.invalid_external_data,
+        correlationId,
+        retryAfterMs: null,
+      });
+    }
 
+    const contextResult = parsedContext.data;
     if (contextResult.status === "needs_slot") {
       return err({
         code: "needs_slot",
@@ -35,7 +46,8 @@ export async function loadDemoBacktest(
       });
     }
 
-    if (contextResult.status !== "ready" || !contextResult.context) {
+    const context = contextResult.context;
+    if (!context.city) {
       return err({
         code: "invalid_external_data",
         message: messages.invalid_external_data,
@@ -44,26 +56,8 @@ export async function loadDemoBacktest(
       });
     }
 
-    const cartContextResult = CartContextSchema.safeParse(
-      contextResult.context,
-    );
-    if (
-      !cartContextResult.success ||
-      !cartContextResult.data.city ||
-      cartContextResult.data.city.trim().length === 0
-    ) {
-      return err({
-        code: "invalid_external_data",
-        message: messages.invalid_external_data,
-        correlationId,
-        retryAfterMs: null,
-      });
-    }
-
-    const activeCity = cartContextResult.data.city.trim();
-    const rawHistory = await gateway.loadPurchaseHistory(
-      cartContextResult.data,
-    );
+    const activeCity = context.city;
+    const rawHistory = await gateway.loadPurchaseHistory(context);
 
     if (!Array.isArray(rawHistory)) {
       return err({

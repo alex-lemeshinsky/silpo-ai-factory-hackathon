@@ -4,7 +4,10 @@ import {
   type NormalizedReceipt,
 } from "@/features/shared/contracts";
 import * as scoring from "./score";
+import { PREDICTION_ALGORITHM_VERSION, PREDICTION_CONFIG } from "./features";
 import {
+  BACKTEST_ALGORITHM_VERSION,
+  BACKTEST_HISTORY_WINDOW_DAYS,
   runRollingBacktest,
   BacktestReportSchema,
   type BacktestOptions,
@@ -55,6 +58,16 @@ function receipt(
 }
 
 describe("B6-01 explicit evaluation context and input validation", () => {
+  it("uses predictor-owned version and history window in report metadata", () => {
+    const report = runRollingBacktest([], { activeCity: "Київ" });
+
+    expect(BACKTEST_ALGORITHM_VERSION).toBe(PREDICTION_ALGORITHM_VERSION);
+    expect(BACKTEST_HISTORY_WINDOW_DAYS).toBe(PREDICTION_CONFIG.historyWindowDays);
+    expect(report.algorithmVersion).toBe(PREDICTION_ALGORITHM_VERSION);
+    expect(report.historyWindowDays).toBe(PREDICTION_CONFIG.historyWindowDays);
+    expect(report.evaluationVersion).toBe("rolling-v2");
+  });
+
   it("accepts an empty receipt list with a valid city", () => {
     const report = runRollingBacktest([], { activeCity: "Київ" });
     expect(report.windows).toEqual([]);
@@ -740,6 +753,47 @@ describe("B6-02 leakage resistance and temporal invariance", () => {
 });
 
 describe("B6-07 schema consistency and rejection", () => {
+  it("rejects calibration values assigned to the wrong confidence band", () => {
+    const valid = runRollingBacktest(
+      [0, 7, 14, 21].map((day) => receipt(day)),
+      { activeCity: "Київ" },
+    );
+    const malformed = structuredClone(valid);
+    malformed.confidenceBuckets = [
+      {
+        confidenceBand: "medium",
+        predictionCount: 1,
+        meanConfidence: 0.86,
+        observedFrequency: 1,
+      },
+      {
+        confidenceBand: "high",
+        predictionCount: 0,
+        meanConfidence: null,
+        observedFrequency: null,
+      },
+    ];
+
+    expect(() => BacktestReportSchema.parse(malformed)).toThrow(/bucket/i);
+  });
+
+  it.each([
+    ["meanConfidence", 0.95],
+    ["observedFrequency", 0],
+  ] as const)(
+    "rejects calibration %s inconsistent with window evidence",
+    (field, value) => {
+      const valid = runRollingBacktest(
+        [0, 7, 14, 21].map((day) => receipt(day)),
+        { activeCity: "Київ" },
+      );
+      const malformed = structuredClone(valid);
+      malformed.confidenceBuckets[1][field] = value;
+
+      expect(() => BacktestReportSchema.parse(malformed)).toThrow(/bucket/i);
+    },
+  );
+
   it("rejects mutated reports violating consistency rules", () => {
     const valid = runRollingBacktest(
       [0, 7, 14, 21].map((day) => receipt(day)),
@@ -777,6 +831,12 @@ describe("B6-07 schema consistency and rejection", () => {
     const badHits = structuredClone(valid);
     badHits.windows[3].prediction.categoryHits = 5;
     expect(() => BacktestReportSchema.parse(badHits)).toThrow(/categoryHits/);
+
+    for (const source of ["prediction", "baseline"] as const) {
+      const badHitFlag = structuredClone(valid);
+      badHitFlag.windows[3][source].categories[0].hit = false;
+      expect(() => BacktestReportSchema.parse(badHitFlag)).toThrow(/hit flags/);
+    }
 
     // 6. Baseline confidence non-null
     const badBaseline = structuredClone(valid);

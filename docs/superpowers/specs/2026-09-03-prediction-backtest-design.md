@@ -178,7 +178,7 @@ The domain API assumes normalized receipts contain only evidence available at th
 
 ### B6-03 — Prediction and truth sets
 
-`categoryK = 3` and `exactK = 3` are fixed report metadata in evaluator version `rolling-v1`.
+`categoryK = 3` and `exactK = 3` are fixed report metadata in evaluator version `rolling-v2`. Algorithm version and history-window metadata come from the predictor-owned constants in `features.ts`.
 
 - Category predictions are the first three needs in `inferNeeds` order, with their confidence.
 - Exact-SKU predictions walk all needs in score order, take only the first preferred ID of each need, skip missing IDs and duplicate IDs, and stop at three. Alternative IDs are not extra recommendations and must not inflate hits.
@@ -208,6 +208,8 @@ An empty input, or all skipped targets, yields empty windows and `null` summary 
 
 Calibrate only the selected top-three category predictions actually evaluated. Return exactly two buckets in order: `medium` (`[0.55, 0.75)`) and `high` (`[0.75, 1]`). Each carries prediction count, mean confidence, and observed frequency (`category hits in the bucket / prediction count`). An empty bucket has count `0` and both values `null`. Baseline predictions have no probabilistic confidence and do not enter these buckets.
 
+Every selected category records a `hit` flag indicating membership in the target's actual category set. This is evaluation evidence, computed after selection. The report schema recomputes each bucket's membership, mean confidence, and observed frequency from the window category rows. Baseline category rows also carry hit flags for validating their aggregate hit counts. These required fields define the `rolling-v2` serialized report format.
+
 ### B6-06 — Comparable 90-day baseline
 
 For each target, independently count category and SKU occurrences in `[T - 90 × DAY_MS, T)`, using the same item exclusions, distinct-timestamp observation rule, city weights, and support minima as Task 5. Rank eligible categories and SKUs by descending weighted occurrence count, then ascending category key or numeric ID. Take three of each. Do not apply due/MAD scoring, use future data, or derive the baseline from predictor output.
@@ -229,7 +231,11 @@ interface BacktestMetrics {
 }
 
 interface WindowPrediction {
-  categories: Array<{ categoryKey: string; confidence: number | null }>;
+  categories: Array<{
+    categoryKey: string;
+    confidence: number | null;
+    hit: boolean;
+  }>;
   externalProductIds: number[];
   categoryHits: number;
   exactSkuHits: number;
@@ -255,7 +261,7 @@ interface ConfidenceBucket {
 
 interface BacktestReport {
   algorithmVersion: "prediction-v1";
-  evaluationVersion: "rolling-v1";
+  evaluationVersion: "rolling-v2";
   baselineVersion: "frequency-90d-v1";
   categoryK: 3;
   exactK: 3;
@@ -272,7 +278,7 @@ interface BacktestReport {
 }
 ```
 
-Validate report consistency: counts match windows and sum to the input count; `trainingCutoff < testDate`; hits do not exceed predictions or actual set sizes; model confidences are in `[0.55, 1]`; baseline confidences are null; bucket counts match evaluated category predictions; empty denominators have null values. No raw receipts, fingerprints, source IDs, private fields, or checkout URLs enter the report.
+Validate report consistency: counts match windows and sum to the input count; `trainingCutoff < testDate`; hits do not exceed predictions or actual set sizes; category hit counts match the per-category hit flags; model confidences are in `[0.55, 1]`; baseline confidences are null; each bucket's count, mean confidence, and observed frequency match the evaluated category rows for that band; empty denominators have null values. No raw receipts, fingerprints, source IDs, private fields, or checkout URLs enter the report.
 
 ### B6-08 — Hand-computable oracle
 
