@@ -38,6 +38,8 @@ describe("DraftRepository (in-memory)", () => {
     const record = await repo.getApproval("draft-1");
 
     expect(record).not.toBeNull();
+    expect(record?.id).toBeDefined();
+    expect(typeof record?.id).toBe("string");
     expect(record?.draftId).toBe("draft-1");
     expect(record?.userId).toBe("user-1");
     expect(record?.idempotencyKey).toBe("key-1");
@@ -50,6 +52,12 @@ describe("DraftRepository (in-memory)", () => {
 
     expect((await repo.getApproval("draft-1"))?.idempotencyKey).toBe("key-1");
     expect((await repo.getApproval("draft-2"))?.idempotencyKey).toBe("key-2");
+  });
+
+  it("rejects using the same idempotency key across different drafts", async () => {
+    const repo = createInMemoryDraftRepository();
+    await repo.approve("draft-1", "user-1", "shared-key");
+    await expect(repo.approve("draft-2", "user-1", "shared-key")).rejects.toThrow("already approved");
   });
 });
 
@@ -186,5 +194,38 @@ describe("DraftRepository (postgres)", () => {
 
     const repo = createPostgresDraftRepository(mockDb);
     await expect(repo.approve("draft-1", "user-1", "key-1")).rejects.toThrow(dbError);
+  });
+
+  it("handles concurrent insert race condition and succeeds on recheck", async () => {
+    let selectCount = 0;
+    const concurrentRow = {
+      id: "uuid-conc",
+      draftId: "draft-conc",
+      userId: "user-conc",
+      idempotencyKey: "key-conc",
+      createdAt: new Date(),
+    };
+
+    const mockDb = {
+      select: vi.fn(() => ({
+        from: vi.fn(() => ({
+          where: vi.fn(() => ({
+            limit: vi.fn(async () => {
+              selectCount++;
+              return selectCount === 1 ? [] : [concurrentRow];
+            }),
+          })),
+        })),
+      })),
+      insert: vi.fn(() => ({
+        values: vi.fn(async () => {
+          throw new Error("unique constraint violation");
+        }),
+      })),
+    } as unknown as DbClient;
+
+    const repo = createPostgresDraftRepository(mockDb);
+    const result = await repo.approve("draft-conc", "user-conc", "key-conc");
+    expect(result).toEqual({ idempotencyKey: "key-conc" });
   });
 });

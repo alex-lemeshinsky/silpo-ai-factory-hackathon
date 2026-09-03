@@ -1,13 +1,21 @@
 import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
+import { getServerEnv } from "@/lib/env";
 import * as schema from "./schema";
 
 export type DbClient = ReturnType<typeof drizzle<typeof schema>>;
 
-let globalClient: DbClient | undefined;
+const globalForDb = globalThis as unknown as { dbClient?: DbClient };
 
 export function createDbClient(connectionString?: string): DbClient {
-  const url = connectionString ?? process.env.DATABASE_URL;
+  let url = connectionString;
+  if (!url) {
+    try {
+      url = getServerEnv().DATABASE_URL;
+    } catch {
+      url = process.env.DATABASE_URL;
+    }
+  }
   if (!url) {
     throw new Error("DATABASE_URL is not set");
   }
@@ -16,8 +24,8 @@ export function createDbClient(connectionString?: string): DbClient {
 }
 
 export function getDbClient(): DbClient {
-  if (!globalClient) {
-    globalClient = createDbClient();
+  if (!globalForDb.dbClient) {
+    globalForDb.dbClient = createDbClient();
   }
-  return globalClient;
+  return globalForDb.dbClient;
 }

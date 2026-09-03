@@ -26,6 +26,8 @@ describe("CartCommitRepository (in-memory)", () => {
       draftId: "draft-456",
     });
 
+    expect(created.id).toBeDefined();
+    expect(typeof created.id).toBe("string");
     expect(created.idempotencyKey).toBe("k-meta");
     expect(created.status).toBe("pending");
     expect(created.userId).toBe("user-123");
@@ -198,5 +200,47 @@ describe("CartCommitRepository (postgres)", () => {
     await expect(
       repo.saveResult("unknown-key", { status: "blocked" })
     ).rejects.toThrow(/not found/i);
+  });
+
+  it("handles concurrent insert race condition and succeeds on recheck in postgres", async () => {
+    let selectCount = 0;
+    const concurrentRecord = {
+      id: "commit-uuid-conc",
+      idempotencyKey: "k-conc",
+      draftId: null,
+      userId: null,
+      confirmationTimestamp: new Date(),
+      targetQuantities: { p1: 5 },
+      status: "pending",
+      result: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+
+    const mockDb = {
+      select: vi.fn(() => ({
+        from: vi.fn(() => ({
+          where: vi.fn(() => ({
+            limit: vi.fn(async () => {
+              selectCount++;
+              return selectCount === 1 ? [] : [concurrentRecord];
+            }),
+          })),
+        })),
+      })),
+      insert: vi.fn(() => ({
+        values: vi.fn(() => ({
+          returning: vi.fn(async () => {
+            throw new Error("unique constraint violation");
+          }),
+        })),
+      })),
+    } as unknown as DbClient;
+
+    const repo = createPostgresCartCommitRepository(mockDb);
+    const result = await repo.start({ key: "k-conc", targetQuantities: { p1: 10 } });
+
+    expect(result.idempotencyKey).toBe("k-conc");
+    expect(result.targetQuantities).toEqual({ p1: 5 });
   });
 });

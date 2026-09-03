@@ -48,6 +48,7 @@ export function createInMemoryCartCommitRepository(): CartCommitRepository {
       const now = new Date();
       const confirmationTimestamp = input.confirmationTimestamp ?? now;
       const record: CartCommitRecord = {
+        id: crypto.randomUUID(),
         idempotencyKey: input.key,
         targetQuantities: { ...input.targetQuantities },
         userId: input.userId ?? null,

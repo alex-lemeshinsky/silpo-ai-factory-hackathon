@@ -17,6 +17,7 @@ export interface DraftRepository {
 
 export function createInMemoryDraftRepository(): DraftRepository {
   const approvalsByDraftId = new Map<string, DraftApprovalRecord>();
+  const draftIdByKey = new Map<string, string>();
 
   return {
     async approve(draftId: string, userId: string, idempotencyKey: string): Promise<{ idempotencyKey: string }> {
@@ -27,12 +28,21 @@ export function createInMemoryDraftRepository(): DraftRepository {
         }
         throw new Error("already approved");
       }
-      approvalsByDraftId.set(draftId, {
+
+      const existingDraftForThisKey = draftIdByKey.get(idempotencyKey);
+      if (existingDraftForThisKey && existingDraftForThisKey !== draftId) {
+        throw new Error("already approved");
+      }
+
+      const record: DraftApprovalRecord = {
+        id: crypto.randomUUID(),
         draftId,
         userId,
         idempotencyKey,
         createdAt: new Date(),
-      });
+      };
+      approvalsByDraftId.set(draftId, record);
+      draftIdByKey.set(idempotencyKey, draftId);
       return { idempotencyKey };
     },
 
