@@ -24,3 +24,5 @@ pnpm-debug.log*
 # OS/editor noise
 .DS_Store
 .superpowers/
+.worktrees
+.worktrees/
