@@ -7,6 +7,8 @@ export default defineConfig([
   ...nextTs,
   globalIgnores([
     ".next/**",
+    ".worktrees/**",
+    ".pnpm-store/**",
     "out/**",
     "build/**",
     "coverage/**",
