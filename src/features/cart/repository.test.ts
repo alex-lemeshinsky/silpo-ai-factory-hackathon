@@ -31,6 +31,15 @@ describe("CartCommitRepository (in-memory)", () => {
     expect(created.userId).toBe("user-123");
     expect(created.draftId).toBe("draft-456");
     expect(created.targetQuantities).toEqual({ "prod-1": 2, "prod-2": 4 });
+    expect(created.confirmationTimestamp).toBeInstanceOf(Date);
+
+    const explicitTime = new Date("2026-09-01T10:00:00.000Z");
+    const withCustomTime = await repo.start({
+      key: "k-custom-time",
+      targetQuantities: { "prod-1": 1 },
+      confirmationTimestamp: explicitTime,
+    });
+    expect(withCustomTime.confirmationTimestamp).toEqual(explicitTime);
   });
 
   it("returns null for unknown commit key", async () => {

@@ -65,17 +65,20 @@ export function createPostgresDraftRepository(db: DbClient): DraftRepository {
           idempotencyKey,
         });
         return { idempotencyKey };
-      } catch {
+      } catch (err: unknown) {
         const [rechecked] = await db
           .select()
           .from(draftApprovals)
           .where(eq(draftApprovals.draftId, draftId))
           .limit(1);
 
-        if (rechecked && rechecked.userId === userId && rechecked.idempotencyKey === idempotencyKey) {
-          return { idempotencyKey };
+        if (rechecked) {
+          if (rechecked.userId === userId && rechecked.idempotencyKey === idempotencyKey) {
+            return { idempotencyKey };
+          }
+          throw new Error("already approved");
         }
-        throw new Error("already approved");
+        throw err;
       }
     },
 

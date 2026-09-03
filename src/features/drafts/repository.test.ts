@@ -166,4 +166,25 @@ describe("DraftRepository (postgres)", () => {
       createdAt: now,
     });
   });
+
+  it("rethrows database error when insert fails and draft is not found on recheck", async () => {
+    const dbError = new Error("database connection timeout");
+    const mockDb = {
+      select: vi.fn(() => ({
+        from: vi.fn(() => ({
+          where: vi.fn(() => ({
+            limit: vi.fn(async () => []),
+          })),
+        })),
+      })),
+      insert: vi.fn(() => ({
+        values: vi.fn(async () => {
+          throw dbError;
+        }),
+      })),
+    } as unknown as DbClient;
+
+    const repo = createPostgresDraftRepository(mockDb);
+    await expect(repo.approve("draft-1", "user-1", "key-1")).rejects.toThrow(dbError);
+  });
 });

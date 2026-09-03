@@ -22,6 +22,7 @@ export interface StartCartCommitInput {
   targetQuantities: Record<string, number>;
   userId?: string;
   draftId?: string;
+  confirmationTimestamp?: Date;
 }
 
 export interface SaveCartCommitResultInput {
@@ -45,12 +46,14 @@ export function createInMemoryCartCommitRepository(): CartCommitRepository {
         return existing;
       }
       const now = new Date();
+      const confirmationTimestamp = input.confirmationTimestamp ?? now;
       const record: CartCommitRecord = {
         idempotencyKey: input.key,
         targetQuantities: { ...input.targetQuantities },
         userId: input.userId ?? null,
         draftId: input.draftId ?? null,
         status: "pending",
+        confirmationTimestamp,
         result: null,
         createdAt: now,
         updatedAt: now,
@@ -104,6 +107,8 @@ export function createPostgresCartCommitRepository(db: DbClient): CartCommitRepo
         };
       }
 
+      const confirmationTimestamp = input.confirmationTimestamp ?? new Date();
+
       try {
         const [inserted] = await db
           .insert(cartCommits)
@@ -112,6 +117,7 @@ export function createPostgresCartCommitRepository(db: DbClient): CartCommitRepo
             targetQuantities: input.targetQuantities,
             userId: input.userId ?? null,
             draftId: input.draftId ?? null,
+            confirmationTimestamp,
             status: "pending",
           })
           .returning();

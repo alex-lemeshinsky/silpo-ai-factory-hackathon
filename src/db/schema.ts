@@ -160,8 +160,13 @@ export const toolTraces = pgTable("tool_traces", {
 // 12. draft_approvals
 export const draftApprovals = pgTable("draft_approvals", {
   id: uuid("id").primaryKey().defaultRandom(),
-  draftId: text("draft_id").notNull().unique(),
-  userId: text("user_id").notNull(),
+  draftId: uuid("draft_id")
+    .notNull()
+    .unique()
+    .references(() => drafts.id, { onDelete: "cascade" }),
+  userId: uuid("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
   idempotencyKey: text("idempotency_key").notNull().unique(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });

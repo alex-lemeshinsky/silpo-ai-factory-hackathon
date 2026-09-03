@@ -1,5 +1,5 @@
 {
-  "id": "ec5275b1-dce1-405f-b7e5-48da71c75074",
+  "id": "a228ad56-266f-4b1e-be95-2c31e3d31ff2",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -128,13 +128,13 @@
         },
         "draft_id": {
           "name": "draft_id",
-          "type": "text",
+          "type": "uuid",
           "primaryKey": false,
           "notNull": true
         },
         "user_id": {
           "name": "user_id",
-          "type": "text",
+          "type": "uuid",
           "primaryKey": false,
           "notNull": true
         },
@@ -153,7 +153,34 @@
         }
       },
       "indexes": {},
-      "foreignKeys": {},
+      "foreignKeys": {
+        "draft_approvals_draft_id_drafts_id_fk": {
+          "name": "draft_approvals_draft_id_drafts_id_fk",
+          "tableFrom": "draft_approvals",
+          "tableTo": "drafts",
+          "columnsFrom": [
+            "draft_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "draft_approvals_user_id_users_id_fk": {
+          "name": "draft_approvals_user_id_users_id_fk",
+          "tableFrom": "draft_approvals",
+          "tableTo": "users",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {
         "draft_approvals_draft_id_unique": {

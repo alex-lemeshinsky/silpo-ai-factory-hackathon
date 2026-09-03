@@ -14,8 +14,8 @@ CREATE TABLE "cart_commits" (
 --> statement-breakpoint
 CREATE TABLE "draft_approvals" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
-	"draft_id" text NOT NULL,
-	"user_id" text NOT NULL,
+	"draft_id" uuid NOT NULL,
+	"user_id" uuid NOT NULL,
 	"idempotency_key" text NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "draft_approvals_draft_id_unique" UNIQUE("draft_id"),
@@ -142,6 +142,8 @@ CREATE TABLE "users" (
 --> statement-breakpoint
 ALTER TABLE "cart_commits" ADD CONSTRAINT "cart_commits_draft_id_drafts_id_fk" FOREIGN KEY ("draft_id") REFERENCES "public"."drafts"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "cart_commits" ADD CONSTRAINT "cart_commits_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "draft_approvals" ADD CONSTRAINT "draft_approvals_draft_id_drafts_id_fk" FOREIGN KEY ("draft_id") REFERENCES "public"."drafts"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "draft_approvals" ADD CONSTRAINT "draft_approvals_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "draft_items" ADD CONSTRAINT "draft_items_draft_id_drafts_id_fk" FOREIGN KEY ("draft_id") REFERENCES "public"."drafts"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "drafts" ADD CONSTRAINT "drafts_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "drafts" ADD CONSTRAINT "drafts_source_run_id_prediction_runs_id_fk" FOREIGN KEY ("source_run_id") REFERENCES "public"."prediction_runs"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
