@@ -68,6 +68,7 @@ src/
     agent/{draft-agent,draft-output,prompt}.ts
     drafts/{service,repository}.ts
     cart/{commit-service,repository}.ts
+    diagnostics/{backtest-service,service}.ts
   lib/{env,logger,result}.ts
 fixtures/demo/silpo-snapshot.json
 tests/{contract,integration,e2e}/
@@ -407,6 +408,12 @@ git commit -m "feat: normalize purchase history"
 
 ### Task 5: Prediction feature extraction and scoring
 
+**Detailed spec:** [Prediction and backtest specification](./superpowers/specs/2026-09-03-prediction-backtest-design.md)
+
+**Implementation plan:** [Tasks 5–6 execution plan](./superpowers/plans/2026-09-03-prediction-backtest.md#task-5--prediction-feature-extraction-and-scoring)
+
+**Dependencies:** Tasks 1, 2, and 4 must be integrated before implementation. Planning is complete; implementation remains pending.
+
 **Files:**
 - Create: `src/features/prediction/features.ts`
 - Create: `src/features/prediction/score.ts`
@@ -414,7 +421,7 @@ git commit -m "feat: normalize purchase history"
 
 **Interfaces:**
 - Consumes: `NormalizedReceipt[]`, active date, active city.
-- Produces: `inferNeeds(input): NeedCandidate[]`.
+- Produces: `inferNeeds({ receipts, now, activeCity }): NeedCandidate[]`, `scoreNeed`, `toConfidenceBand`, pure observation/feature helpers, and versioned prediction configuration. See the detailed spec for exact signatures and formulas; shared contracts remain unchanged.
 
 - [ ] **Step 1: Write failing scoring tests**
 
@@ -439,7 +446,7 @@ Expected: FAIL because scoring functions do not exist.
 
 - [ ] **Step 3: Implement features and score**
 
-Use median interval, median absolute deviation, weighted count, days since last purchase, and typical quantity. Clamp every component to 0–1. Filter history older than 180 days and results below 0.55. Sort by descending confidence and then category key for deterministic ties.
+Use median interval, median absolute deviation, weighted count, days since last purchase, and typical quantity. Clamp the due/repeat/stability score components to 0–1, without clamping counts or intervals. Filter history older than 180 days, future receipts, and results below 0.55. Sort by descending confidence and then category key for deterministic ties. Implement P5-01 through P5-07 in the detailed spec, including observation support, compatible quantities, reason codes, and runtime validation.
 
 - [ ] **Step 4: Verify and commit**
 
@@ -455,23 +462,38 @@ git commit -m "feat: score replenishment needs"
 
 ### Task 6: Rolling backtest evaluator
 
+**Detailed spec:** [Prediction and backtest specification](./superpowers/specs/2026-09-03-prediction-backtest-design.md#6-task-6-domain-requirements)
+
+**Implementation plan:** [Task 6 execution plan](./superpowers/plans/2026-09-03-prediction-backtest.md#task-6--rolling-backtest-and-demo-endpoint)
+
+**Dependencies:** Tasks 2, 3, 4, and the reviewed Task 5 commit must be integrated. Task 6 runs after Task 5, not concurrently with it.
+
 **Files:**
 - Create: `src/features/prediction/backtest.ts`
 - Create: `src/features/prediction/backtest.test.ts`
+- Create: `src/features/diagnostics/backtest-service.ts`
+- Test: `src/features/diagnostics/backtest-service.test.ts`
 - Create: `src/app/api/backtest/route.ts`
+- Test: `src/app/api/backtest/route.test.ts`
+
+The application service and route test refine the original file list to preserve the Route Handler → Application Service → Domain boundary. Task 17 remains the owner of the separate diagnostics aggregation service and UI.
 
 **Interfaces:**
-- Consumes: `NormalizedReceipt[]`, `inferNeeds`.
-- Produces: `runRollingBacktest(receipts): BacktestReport`; demo-only `GET /api/backtest`.
+- Consumes: `NormalizedReceipt[]`, explicit `activeCity`, `inferNeeds`, and the demo `SilpoGateway` through an injected application-service port.
+- Produces: `runRollingBacktest(receipts, { activeCity }): BacktestReport`, feature-local `BacktestReportSchema`, `loadDemoBacktest(gateway, correlationId): Promise<Result<BacktestReport, AppError>>`, and demo-only `GET /api/backtest`.
+
+The required city refines the earlier one-argument sketch; deriving it from future receipts or old location weights is not permitted. No frozen shared contract changes are required.
 
 - [ ] **Step 1: Write the failing no-leakage test**
 
 ```ts
 it("never trains on the receipt being predicted", () => {
-  const report = runRollingBacktest(chronologicalReceipts);
-  expect(report.windows.every(w => w.trainingCutoff < w.testDate)).toBe(true);
+  const report = runRollingBacktest(chronologicalReceipts, { activeCity: "Київ" });
+  expect(report.windows.every(w => Date.parse(w.trainingCutoff) < Date.parse(w.testDate))).toBe(true);
 });
 ```
+
+Also assert actual predictor input timestamps, equal-time exclusion, and future-poisoning invariance; cutoff metadata alone is insufficient evidence.
 
 - [ ] **Step 2: Confirm failure**
 
@@ -480,15 +502,15 @@ Expected: FAIL because the evaluator does not exist.
 
 - [ ] **Step 3: Implement metrics**
 
-Return exact-SKU precision/recall, category precision@3, category recall@3, hit rate, coverage, confidence buckets, and the 90-day most-frequent baseline. The route returns 404 in live mode and the report in demo mode.
+Return exact-SKU precision/recall, category precision@3, category recall@3, hit rate, coverage, confidence buckets, and the 90-day most-frequent baseline. Follow B6-01 through B6-10 for fixed-K macro denominators, cold starts, explicit nulls, corpus validation, calibration, and report versioning. The application service loads and validates synthetic history; the thin route returns 404 in live mode and a labeled, non-cacheable report in demo mode. Do not perform live, model, database, or cart-write operations.
 
 - [ ] **Step 4: Verify and commit**
 
-Run: `pnpm vitest run src/features/prediction/backtest.test.ts`
-Expected: PASS with finite metrics in 0–1.
+Run: `pnpm vitest run src/features/prediction/backtest.test.ts src/features/diagnostics/backtest-service.test.ts src/app/api/backtest/route.test.ts`
+Expected: PASS with finite numeric metrics in 0–1 and `null` when a denominator is missing. Then run the cumulative/static/build gates in the implementation plan.
 
 ```bash
-git add src/features/prediction/backtest.ts src/features/prediction/backtest.test.ts src/app/api/backtest
+git add src/features/prediction/backtest.ts src/features/prediction/backtest.test.ts src/features/diagnostics/backtest-service.ts src/features/diagnostics/backtest-service.test.ts src/app/api/backtest/route.ts src/app/api/backtest/route.test.ts
 git commit -m "feat: add rolling prediction backtest"
 ```
 

@@ -112,6 +112,8 @@ Model бере участь лише в `CREATE_DRAFT`. `WAIT_FOR_APPROVAL`, `CO
 
 ## 6. Prediction Engine v1
 
+Точні формули features, одиниця observation, quantity policy, reason codes та acceptance examples для Tasks 5–6 визначені у [специфікації prediction/backtest](./superpowers/specs/2026-09-03-prediction-backtest-design.md#5-task-5-requirements). Це деталізація наведених нижче інваріантів; реалізація ще не завершена.
+
 ### 6.1. Candidate policy
 
 - Вікно історії — максимум 180 днів.
@@ -278,6 +280,8 @@ Deterministic fallback зберігає основну цінність: кор�
 ## 14. Evaluation
 
 ### Offline rolling backtest
+
+Точні denominator, cold-start policy, baseline, calibration buckets і формат звіту визначені у [специфікації Task 6](./superpowers/specs/2026-09-03-prediction-backtest-design.md#6-task-6-domain-requirements). Значення з відсутнім denominator є `null`; вимога finite `0..1` стосується числових значень. Demo importer окремо перевіряє часові передумови synthetic corpus перед normalization.
 
 Для кожної test receipt модель тренується тільки на events із timestamp раніше за test date. Метрики:
 

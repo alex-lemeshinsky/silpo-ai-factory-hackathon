@@ -119,7 +119,7 @@ src/
     agent/{draft-agent,draft-output,prompt}.ts
     drafts/{service,repository}.ts
     cart/{commit-service,repository}.ts
-    diagnostics/service.ts
+    diagnostics/{backtest-service,service}.ts
   lib/{env,logger,result}.ts
 fixtures/demo/silpo-snapshot.json
 tests/{contract,integration,e2e}/
@@ -171,6 +171,8 @@ export interface SilpoGateway {
 ### `DiagnosticsService`
 
 Поєднує rolling backtest, product-decision metrics і санітизовані tool traces. Diagnostics route доступний лише в demo mode.
+
+Task 6 створює окремий `diagnostics/backtest-service.ts`: application service отримує injected `SilpoGateway`, перевіряє synthetic corpus, нормалізує історію та викликає pure evaluator. `/api/backtest` виконує лише mode gating, composition і HTTP mapping. Task 17 зберігає відповідальність за `diagnostics/service.ts` та загальну diagnostics aggregation. Деталі — у [специфікації Tasks 5–6](./superpowers/specs/2026-09-03-prediction-backtest-design.md#7-task-6-application-requirements).
 
 ## 6. HTTP surface
 
