@@ -509,11 +509,11 @@ git commit -m "feat: add rolling prediction backtest"
 - Consumes: Task 2 contracts.
 - Produces: `DraftRepository`, `CartCommitRepository`, migrations for all tables in spec section 10.
 
-- [ ] **Step 1: Install persistence dependencies**
+- [x] **Step 1: Install persistence dependencies**
 
 Run: `pnpm add drizzle-orm postgres && pnpm add -D drizzle-kit`.
 
-- [ ] **Step 2: Write failing repository tests against in-memory fakes**
+- [x] **Step 2: Write failing repository tests against in-memory fakes**
 
 ```ts
 it("persists explicit draft approval once", async () => {
@@ -529,20 +529,20 @@ it("reuses persisted absolute quantities for a retry", async () => {
 });
 ```
 
-- [ ] **Step 3: Define schema and repository interfaces**
+- [x] **Step 3: Define schema and repository interfaces**
 
 Use UUID primary keys, UTC timestamps, unique `purchase_receipts.external_fingerprint`, unique `cart_commits.idempotency_key`, JSONB only for sanitized features/trace metadata, and foreign keys with explicit delete behavior.
 
-- [ ] **Step 4: Implement Postgres and in-memory repositories**
+- [x] **Step 4: Implement Postgres and in-memory repositories**
 
 The application uses Postgres repositories; unit tests use fakes with identical interfaces.
 
-- [ ] **Step 5: Generate migration and verify**
+- [x] **Step 5: Generate migration and verify**
 
 Run: `pnpm drizzle-kit generate && pnpm vitest run src/features/drafts/repository.test.ts src/features/cart/repository.test.ts && pnpm typecheck`
 Expected: migration generated and tests pass.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add drizzle.config.ts drizzle src/db src/features/drafts/repository.ts src/features/drafts/repository.test.ts src/features/cart/repository.ts src/features/cart/repository.test.ts package.json pnpm-lock.yaml
