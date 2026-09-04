@@ -583,7 +583,7 @@ git commit -m "feat: persist drafts and cart commits"
 - Consumes: `TOKEN_ENCRYPTION_KEY`, `mcp_connections`.
 - Produces: `TokenVault.get(userId)`, `TokenVault.put(userId, tokens)`, `TokenVault.clear(userId)`.
 
-- [ ] **Step 1: Write failing encryption tests**
+- [x] **Step 1: Write failing encryption tests**
 
 ```ts
 it("does not store access or refresh tokens as plaintext", async () => {
@@ -594,16 +594,16 @@ it("does not store access or refresh tokens as plaintext", async () => {
 });
 ```
 
-- [ ] **Step 2: Confirm failure**
+- [x] **Step 2: Confirm failure**
 
 Run: `pnpm vitest run src/features/silpo/oauth/token-vault.test.ts`
 Expected: FAIL because `TokenVault` does not exist.
 
-- [ ] **Step 3: Implement encryption**
+- [x] **Step 3: Implement encryption**
 
 Use AES-256-GCM with a random 12-byte IV per write, authenticated tag, and a base64-decoded 32-byte key. Store ciphertext, IV, tag, expiry, and OAuth client metadata separately. Never log token values.
 
-- [ ] **Step 4: Verify and commit**
+- [x] **Step 4: Verify and commit**
 
 Run: `pnpm vitest run src/features/silpo/oauth/token-vault.test.ts`
 Expected: PASS, including wrong-key and tampered-ciphertext cases.
