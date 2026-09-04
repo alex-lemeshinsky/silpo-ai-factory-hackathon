@@ -60,14 +60,20 @@ The module exports one vault factory and its types:
 ```ts
 export interface SilpoTokens {
   accessToken: string;
+  refreshToken?: string | null;
+  clientSecret?: string | null;
+  expiresAt?: Date | null;
+  scope?: string | null;
+  oauthMetadata?: Record<string, unknown> | null;
+}
+
+export interface StoredSilpoTokens {
+  accessToken: string;
   refreshToken: string | null;
   clientSecret: string | null;
   expiresAt: Date | null;
   scope: string | null;
   oauthMetadata: Record<string, unknown> | null;
-}
-
-export interface StoredSilpoTokens extends SilpoTokens {
   isExpired: boolean;
 }
 
@@ -83,6 +89,8 @@ export function createTokenVault(options: {
   now?: () => Date;
 }): TokenVault;
 ```
+
+Every field except `accessToken` is optional on write and defaults to `null`, so a caller holding only an access and refresh token writes exactly those. `StoredSilpoTokens` always returns all six fields explicitly.
 
 `encryptionKey` defaults to the base64-decoded `TOKEN_ENCRYPTION_KEY` from `getServerEnv()`, read when the vault is constructed, not at module import. `now` defaults to `() => new Date()`. A supplied key that is not exactly 32 bytes is rejected at construction.
 
@@ -107,8 +115,29 @@ export interface TokenVaultStorage {
 
 Ciphertext, IV, and tag are base64 strings. Two implementations ship in the same file:
 
-- `createInMemoryTokenVaultStorage(): TokenVaultStorage & { raw(userId: string): unknown }`. `raw` returns the stored row exactly as held, for at-rest assertions. It is a property of the fake, not of the port.
 - `createPostgresTokenVaultStorage(db: DbClient): TokenVaultStorage`, backed by `mcp_connections`.
+- `createInMemoryTokenVaultStorage()`, which returns the port widened with three test-only members:
+
+```ts
+export interface StoredEnvelopeRow {
+  userId: string;
+  tokenCiphertext: string | null;
+  tokenIv: string | null;
+  tokenAuthTag: string | null;
+  legacyEncryptedTokens: string | null;
+  expiresAt: Date | null;
+  scope: string | null;
+  oauthMetadata: Record<string, unknown> | null;
+}
+
+createInMemoryTokenVaultStorage(): TokenVaultStorage & {
+  raw(userId: string): StoredEnvelopeRow[];
+  seedLegacyRow(userId: string, legacyCiphertext: string): void;
+  attachLegacyCiphertext(userId: string, legacyCiphertext: string): void;
+};
+```
+
+The fake holds a list of rows rather than one row per user, so it reproduces the table's real shape: a user may hold a legacy row and an envelope row at once, `read` applies the same three-column filter as the adapter, and `write` and `delete` follow V8-04 and V8-06 exactly. `raw` returns every row for that user, for at-rest assertions. `seedLegacyRow` inserts a legacy-only row; `attachLegacyCiphertext` sets legacy ciphertext on the user's existing envelope row, which is the only way to reach V8-06's second branch, since Task 8 never writes such a row itself.
 
 The fake does not model foreign keys. That gap is intentional and is why V8-04's unknown-user behavior is specified against the adapter rather than proven by a unit test.
 
@@ -207,6 +236,9 @@ Task 9 consumes `TokenVault` unchanged. It supplies `userId`, decides on `isExpi
 | V8-05 | An expired record still yields its refresh token, flagged | `returns expired credentials with an expiry flag` |
 | V8-05 | An absent expiry is not treated as expired | `treats an unknown expiry as unexpired` |
 | V8-06 | `clear` removes the envelope and is idempotent | `clears an envelope and tolerates repeat clears` |
+| V8-06 | `clear` leaves a separate legacy row untouched | `keeps legacy ciphertext when clearing` |
+| V8-06 | `clear` nulls the envelope but keeps legacy on a combined row | `keeps legacy ciphertext on a row that also holds an envelope` |
+| V8-03, V8-07 | An envelope carrying another format version is refused by code | `rejects an envelope written in an unsupported format version` |
 | V8-08 | Metadata carrying a secret-shaped key is rejected | `refuses secret-shaped keys in oauth metadata` |
 | V8-08 | An empty user or access token is rejected before storage | `validates its inputs before writing` |
 
