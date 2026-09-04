@@ -10,6 +10,13 @@
 
 **Spec:** [docs/superpowers/specs/2026-09-04-mcp-token-vault-design.md](../specs/2026-09-04-mcp-token-vault-design.md)
 
+> **Post-review amendment (2026-09-04).** This plan was executed as written; review then found three defects in it.
+> The code in Tasks 8.2 and 8.5 below is therefore one revision behind `src/features/silpo/oauth/token-vault.ts`:
+> `userId` is now lowercased before use as a storage key and as additional authenticated data, and `storedRowSchema`
+> degrades a malformed `expiresAt`, `scope`, or `oauthMetadata` to `null` instead of raising. The at-rest tests in 8.1
+> also assert against the decoded ciphertext bytes, which the original assertions did not. Read the spec and the source
+> for current behavior; two further findings about the `oauthMetadata` secret-key screen are open separately.
+
 ## Global Constraints
 
 - Use `pnpm` exclusively. Add no dependency; do not touch `package.json` or `pnpm-lock.yaml`.

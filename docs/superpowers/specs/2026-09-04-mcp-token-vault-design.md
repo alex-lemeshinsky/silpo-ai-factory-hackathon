@@ -1,6 +1,6 @@
 # Task 8 Encrypted MCP Token Vault Specification
 
-Status: specified for review on 2026-09-04; implementation has not started.
+Status: implemented and reviewed on 2026-09-04. Amended after review to normalize `userId` before use as additional authenticated data and to read the advisory plaintext columns leniently.
 
 ## 1. Scope and authority
 
@@ -33,7 +33,7 @@ Fresh prerequisite evidence during planning: `pnpm vitest run src/lib/env.test.t
 | Composition | An injected `TokenVaultStorage` port with an in-memory fake and a Postgres adapter; cryptography lives once, above the port. Two independent `TokenVault` implementations would let the fake re-implement encryption, so the central "no plaintext at rest" test would prove nothing about the Postgres path. |
 | Envelope contents | One authenticated ciphertext over `accessToken`, `refreshToken`, and `clientSecret`. Dynamic Client Registration can return a client secret; leaving it for Task 9 invites it into the plaintext `oauth_metadata` column. |
 | Plaintext columns | `expires_at`, `scope`, and non-secret `oauth_metadata` stay readable. They are not secrets, and encrypting them would block expiry queries and make operational debugging opaque for no gain. |
-| Envelope binding | `userId` as AES-GCM additional authenticated data. A row copied between users then fails authentication instead of decrypting into the wrong session. |
+| Envelope binding | The normalized `userId` as AES-GCM additional authenticated data. A row copied between users then fails authentication instead of decrypting into the wrong session. Normalization is not cosmetic: `user_id` is a uuid column, so Postgres matches ids without regard to case, and an AAD built from the raw string would find the row and then fail the tag. |
 | Legacy rows | Read, decrypt, and rewrite nothing in `encrypted_tokens`. Its format is documented nowhere in this repository; guessing it risks a silent wrong-key decrypt. A legacy-only user reads as absent and reauthorizes. |
 | Expiry | `get` returns the record with a computed `isExpired`, never `null`. Withholding an expired record would also withhold the refresh token and break the one-refresh-attempt invariant. |
 | Unreadable envelope | Throw a typed error rather than return `null`. A `null` would disguise key rotation or corruption as "user not connected" and loop that user through reauthorization indefinitely. |
@@ -207,13 +207,14 @@ Neither error message includes plaintext, ciphertext, key, IV, tag, or `userId`.
 
 Validation occurs at the boundary with Zod, throwing `ZodError` exactly as the Task 7 repositories do; `TokenVaultError` is reserved for envelope failures.
 
-- `userId` is a trimmed, non-empty string on all three methods.
+- `userId` is a trimmed, non-empty string on all three methods, lowercased before it is used as a storage key or as additional authenticated data, so the two can never disagree about which id they mean.
 - `accessToken` is a trimmed, non-empty string.
 - `refreshToken` and `clientSecret` are trimmed, non-empty strings or `null`.
 - `expiresAt` is a valid `Date` or `null`.
 - `scope` is a trimmed, non-empty string or `null`.
 - `oauthMetadata` is a plain object or `null`, and **must not contain a top-level key matching `/secret|token|password|assertion|credential/i`**. This rejects a client secret routed into the plaintext column instead of the envelope.
-- Rows read back from storage are validated before decryption: the three envelope fields are non-empty base64, the IV decodes to 12 bytes, and the tag decodes to 16 bytes. A row failing these checks raises `envelope_unreadable`.
+- Rows read back from storage are validated before decryption. The envelope fields are strict: the three must be non-empty base64, the IV must decode to 12 bytes, and the tag to 16 bytes; a row failing any of these raises `envelope_unreadable`.
+- `expiresAt`, `scope`, and `oauthMetadata` are read leniently, and a value of the wrong shape degrades to `null` rather than raising. The authentication tag does not cover these columns, so refusing a decryptable envelope over one of them would push a user into reauthorization while protecting nothing.
 
 ### V8-09 — Handoff to Task 9
 
@@ -241,6 +242,8 @@ Task 9 consumes `TokenVault` unchanged. It supplies `userId`, decides on `isExpi
 | V8-03, V8-07 | An envelope carrying another format version is refused by code | `rejects an envelope written in an unsupported format version` |
 | V8-08 | Metadata carrying a secret-shaped key is rejected | `refuses secret-shaped keys in oauth metadata` |
 | V8-08 | An empty user or access token is rejected before storage | `validates its inputs before writing` |
+| V8-08 | An id differing only in case still reads back | `reads back an envelope written under a differently cased user id` |
+| V8-05, V8-08 | A malformed advisory column degrades instead of bricking the envelope | `survives malformed values in the plaintext columns` |
 
 Verification commands and their expected results:
 

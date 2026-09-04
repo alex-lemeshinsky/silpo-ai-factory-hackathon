@@ -78,6 +78,12 @@ export interface TokenVault {
 }
 
 const nonEmptyString = z.string().trim().min(1);
+
+// `mcp_connections.user_id` is a uuid column, so Postgres matches ids without regard to
+// case and always renders them lowercase. The additional authenticated data has to
+// normalize the same way: otherwise a differently cased id finds the row and then fails
+// the authentication tag, locking a user out of a perfectly good connection.
+const userIdSchema = nonEmptyString.transform((value) => value.toLowerCase());
 const validDate = z
   .date()
   .refine((value) => Number.isFinite(value.getTime()), "date must be valid");
@@ -103,14 +109,34 @@ const silpoTokensSchema = z
   })
   .strict();
 
+// The envelope columns are security critical and stay strict. The rest are advisory
+// plaintext that the authentication tag does not cover, so a malformed value there is
+// degraded to null rather than raised: bricking a decryptable envelope over a column
+// that carries no secret would only push the user into a needless reauthorization.
+const tolerated = {
+  date: z
+    .unknown()
+    .transform((value) =>
+      value instanceof Date && Number.isFinite(value.getTime()) ? value : null,
+    ),
+  string: z.unknown().transform((value) => (typeof value === "string" ? value : null)),
+  metadata: z
+    .unknown()
+    .transform((value) =>
+      typeof value === "object" && value !== null && !Array.isArray(value)
+        ? (value as Record<string, unknown>)
+        : null,
+    ),
+};
+
 const storedRowSchema = z
   .object({
     tokenCiphertext: nonEmptyString,
     tokenIv: nonEmptyString,
     tokenAuthTag: nonEmptyString,
-    expiresAt: validDate.nullable(),
-    scope: z.string().nullable(),
-    oauthMetadata: plainObject.nullable(),
+    expiresAt: tolerated.date,
+    scope: tolerated.string,
+    oauthMetadata: tolerated.metadata,
   })
   .strict();
 
@@ -315,7 +341,7 @@ export function createTokenVault(options: {
 
   return {
     async get(userId: string): Promise<StoredSilpoTokens | null> {
-      const parsedUserId = nonEmptyString.parse(userId);
+      const parsedUserId = userIdSchema.parse(userId);
       const row = await storage.read(parsedUserId);
       if (!row) {
         return null;
@@ -341,7 +367,7 @@ export function createTokenVault(options: {
     },
 
     async put(userId: string, tokens: SilpoTokens): Promise<void> {
-      const parsedUserId = nonEmptyString.parse(userId);
+      const parsedUserId = userIdSchema.parse(userId);
       const parsed = silpoTokensSchema.parse(tokens);
       const envelope = encryptEnvelope(key, parsedUserId, {
         accessToken: parsed.accessToken,
@@ -358,7 +384,7 @@ export function createTokenVault(options: {
     },
 
     async clear(userId: string): Promise<void> {
-      await storage.delete(nonEmptyString.parse(userId));
+      await storage.delete(userIdSchema.parse(userId));
     },
   };
 }

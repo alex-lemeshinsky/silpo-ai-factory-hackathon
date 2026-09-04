@@ -69,7 +69,15 @@ describe("TokenVault", () => {
       expiresAt: EXPIRES_AT,
     });
 
-    expect(JSON.stringify(storage.raw("u1"))).not.toContain("secret");
+    const atRest = JSON.stringify(storage.raw("u1"));
+    const ciphertextBytes = Buffer.from(envelopeOf(storage, "u1").tokenCiphertext, "base64");
+
+    for (const token of ["access-secret", "refresh-secret"]) {
+      expect(atRest).not.toContain(token);
+      // latin1 preserves bytes one to one, so a merely encoded token surfaces here.
+      expect(ciphertextBytes.toString("latin1")).not.toContain(token);
+    }
+
     expect(await vault.get("u1")).toMatchObject({ accessToken: "access-secret" });
   });
 
@@ -81,7 +89,10 @@ describe("TokenVault", () => {
       clientSecret: "client-secret-value",
     });
 
+    const ciphertextBytes = Buffer.from(envelopeOf(storage, "u1").tokenCiphertext, "base64");
+
     expect(JSON.stringify(storage.raw("u1"))).not.toContain("client-secret-value");
+    expect(ciphertextBytes.toString("latin1")).not.toContain("client-secret-value");
     expect(await vault.get("u1")).toMatchObject({ clientSecret: "client-secret-value" });
   });
 
@@ -277,6 +288,32 @@ describe("TokenVault", () => {
         oauthMetadata: { clientId: "abc", issuer: "https://auth.silpo.ua" },
       }),
     ).resolves.toBeUndefined();
+  });
+
+  it("reads back an envelope written under a differently cased user id", async () => {
+    const { vault } = setup();
+    const upper = "A1B2C3D4-0000-4000-8000-000000000001";
+
+    await vault.put(upper, { accessToken: "access-value" });
+
+    expect(await vault.get(upper.toLowerCase())).toMatchObject({ accessToken: "access-value" });
+  });
+
+  it("survives malformed values in the plaintext columns", async () => {
+    const { storage, vault } = setup();
+    await vault.put("u1", { accessToken: "access-value", scope: "cart:write" });
+
+    await storage.write("u1", {
+      ...envelopeOf(storage, "u1"),
+      scope: 42 as unknown as string,
+      oauthMetadata: ["not-an-object"] as unknown as Record<string, unknown>,
+    });
+
+    expect(await vault.get("u1")).toMatchObject({
+      accessToken: "access-value",
+      scope: null,
+      oauthMetadata: null,
+    });
   });
 
   it("validates its inputs before writing", async () => {
