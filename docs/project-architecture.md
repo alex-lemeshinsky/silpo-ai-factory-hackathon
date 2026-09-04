@@ -266,7 +266,8 @@ customer + cart context
 - `drafts`: user, source run, mode, status, total, version;
 - `draft_items`: resolved product, quantity, price snapshot, reason, user decision, version;
 - `cart_commits`: idempotency key, confirmation timestamp, absolute target quantities, result;
-- `tool_traces`: correlation ID, tool name, mode, duration, retry count, sanitized status.
+- `tool_traces`: correlation ID, tool name, mode, duration, retry count, sanitized status;
+- `draft_approvals`: draft, user, idempotency key, approval timestamp.
 
 Вимоги:
 
