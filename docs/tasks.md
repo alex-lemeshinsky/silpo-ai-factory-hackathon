@@ -529,7 +529,7 @@ git commit -m "feat: add rolling prediction backtest"
 
 **Interfaces:**
 - Consumes: Task 2 contracts.
-- Produces: `DraftRepository`, `CartCommitRepository`, migrations for all tables in spec section 10.
+- Produces: `DraftRepository.save(userId, draft, { expectedVersion? })`, `DraftRepository.get(draftId, userId)`, approval persistence, `CartCommitRepository`, and migrations for all tables in spec section 10. Draft save/update persists its prediction-run metadata and ordered item snapshots in one transaction; updates use optimistic version checks, and repository reads validate database rows before returning trusted domain values.
 
 - [x] **Step 1: Install persistence dependencies**
 
@@ -553,7 +553,7 @@ it("reuses persisted absolute quantities for a retry", async () => {
 
 - [x] **Step 3: Define schema and repository interfaces**
 
-Use UUID primary keys, UTC timestamps, unique `purchase_receipts.external_fingerprint`, unique `cart_commits.idempotency_key`, JSONB only for sanitized features/trace metadata, and foreign keys with explicit delete behavior.
+Use UUID primary keys, UTC timestamps, unique `purchase_receipts.external_fingerprint`, unique `cart_commits.idempotency_key`, JSONB only for sanitized features/trace metadata, and foreign keys with explicit delete behavior. Store the MCP token ciphertext, 12-byte IV, and authentication tag in separate columns. Keep the legacy ciphertext column during the compatible migration, and use a partial unique index to permit only one new-format envelope per user so Task 8 can implement `TokenVault.get(userId)` unambiguously without destroying older rows.
 
 - [x] **Step 4: Implement Postgres and in-memory repositories**
 

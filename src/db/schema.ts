@@ -5,8 +5,10 @@ import {
   pgTable,
   text,
   timestamp,
+  uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 
 // 1. users
 export const users = pgTable("users", {
@@ -17,18 +19,29 @@ export const users = pgTable("users", {
 });
 
 // 2. mcp_connections
-export const mcpConnections = pgTable("mcp_connections", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  userId: uuid("user_id")
-    .notNull()
-    .references(() => users.id, { onDelete: "cascade" }),
-  encryptedTokens: text("encrypted_tokens"),
-  expiresAt: timestamp("expires_at", { withTimezone: true }),
-  scope: text("scope"),
-  oauthMetadata: jsonb("oauth_metadata").$type<Record<string, unknown>>(),
-  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
-});
+export const mcpConnections = pgTable(
+  "mcp_connections",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    tokenCiphertext: text("token_ciphertext"),
+    tokenIv: text("token_iv"),
+    tokenAuthTag: text("token_auth_tag"),
+    legacyEncryptedTokens: text("encrypted_tokens"),
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+    scope: text("scope"),
+    oauthMetadata: jsonb("oauth_metadata").$type<Record<string, unknown>>(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("mcp_connections_user_id_envelope_unique")
+      .on(table.userId)
+      .where(sql`${table.tokenCiphertext} is not null`),
+  ],
+);
 
 // 3. purchase_receipts
 export const purchaseReceipts = pgTable("purchase_receipts", {
@@ -127,6 +140,7 @@ export const draftItems = pgTable("draft_items", {
   nutritionStatus: text("nutrition_status"),
   userDecision: text("user_decision"),
   version: integer("version"),
+  position: integer("position"),
   alternatives: jsonb("alternatives").$type<unknown[]>(),
 });
 

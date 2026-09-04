@@ -257,7 +257,7 @@ customer + cart context
 Основні таблиці:
 
 - `users`: внутрішній ID і мінімальні settings;
-- `mcp_connections`: encrypted tokens, expiry, scope і OAuth metadata;
+- `mcp_connections`: окремі AES-256-GCM ciphertext, IV і auth tag, expiry, scope та OAuth metadata; legacy ciphertext зберігається до окремої безпечної міграції, а partial unique index дозволяє лише один new-format envelope на користувача;
 - `purchase_receipts`: channel, timestamp, city, totals, external fingerprint;
 - `purchase_items`: receipt, external product ID, category, quantity, unit price;
 - `product_snapshots`: product/external ID, branch, price, stock, attributes, `captured_at`;

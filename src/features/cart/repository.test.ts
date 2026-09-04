@@ -81,6 +81,66 @@ describe("CartCommitRepository (in-memory)", () => {
 });
 
 describe("CartCommitRepository (postgres)", () => {
+  it("rejects malformed persisted quantities at the database boundary", async () => {
+    const malformedRecord = {
+      id: "commit-uuid-1",
+      idempotencyKey: "k-invalid",
+      draftId: null,
+      userId: null,
+      confirmationTimestamp: new Date(),
+      targetQuantities: { p1: -3 },
+      status: "pending",
+      result: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    const mockDb = {
+      select: vi.fn(() => ({
+        from: vi.fn(() => ({
+          where: vi.fn(() => ({
+            limit: vi.fn(async () => [malformedRecord]),
+          })),
+        })),
+      })),
+    } as unknown as DbClient;
+
+    const repo = createPostgresCartCommitRepository(mockDb);
+    await expect(repo.get("k-invalid")).rejects.toThrow();
+  });
+
+  it("rejects malformed persisted status at the database boundary", async () => {
+    const malformedRecord = {
+      id: "commit-uuid-1",
+      idempotencyKey: "k-invalid-status",
+      draftId: null,
+      userId: null,
+      confirmationTimestamp: new Date(),
+      targetQuantities: { p1: 3 },
+      status: "complete",
+      result: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    const mockDb = {
+      select: vi.fn(() => ({
+        from: vi.fn(() => ({
+          where: vi.fn(() => ({ limit: vi.fn(async () => [malformedRecord]) })),
+        })),
+      })),
+    } as unknown as DbClient;
+
+    const repo = createPostgresCartCommitRepository(mockDb);
+    await expect(repo.get("k-invalid-status")).rejects.toThrow();
+  });
+
+  it("rejects invalid target quantities before persistence", async () => {
+    const repo = createPostgresCartCommitRepository({} as DbClient);
+
+    await expect(
+      repo.start({ key: "k-invalid", targetQuantities: { p1: Number.NaN } }),
+    ).rejects.toThrow();
+  });
+
   it("inserts new commit record when not exists", async () => {
     const insertedRecord = {
       id: "commit-uuid-1",

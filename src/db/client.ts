@@ -8,17 +8,7 @@ export type DbClient = ReturnType<typeof drizzle<typeof schema>>;
 const globalForDb = globalThis as unknown as { dbClient?: DbClient };
 
 export function createDbClient(connectionString?: string): DbClient {
-  let url = connectionString;
-  if (!url) {
-    try {
-      url = getServerEnv().DATABASE_URL;
-    } catch {
-      url = process.env.DATABASE_URL;
-    }
-  }
-  if (!url) {
-    throw new Error("DATABASE_URL is not set");
-  }
+  const url = connectionString ?? getServerEnv().DATABASE_URL;
   const queryClient = postgres(url);
   return drizzle(queryClient, { schema });
 }
