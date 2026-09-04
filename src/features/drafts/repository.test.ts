@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { DbClient } from "@/db/client";
-import type { Draft } from "@/features/shared/contracts";
+import { type Draft, DraftSchema } from "@/features/shared/contracts";
 import {
   createInMemoryDraftRepository,
   createPostgresDraftRepository,
@@ -18,8 +18,11 @@ const draftFixture: Draft = {
       productId: "product-1",
       externalProductId: 101,
       name: "Молоко",
+      imageUrl: null,
+      displayRatio: 1,
       quantity: 2,
       price: 55,
+      specialPrice: null,
       stock: 10,
       step: 1,
       confidence: 0.8,
@@ -27,6 +30,7 @@ const draftFixture: Draft = {
       reasonCodes: ["weekly_cycle"],
       reason: "Купуєте приблизно щотижня",
       nutritionStatus: "insufficient",
+      promotions: [],
       alternatives: [],
     },
   ],
@@ -113,6 +117,31 @@ describe("DraftRepository (in-memory)", () => {
     const repo = createInMemoryDraftRepository();
     await repo.approve("draft-1", "user-1", "shared-key");
     await expect(repo.approve("draft-2", "user-1", "shared-key")).rejects.toThrow("already approved");
+  });
+
+  it("A7-02 round-trips presentation fields through the in-memory repository", async () => {
+    const repo = createInMemoryDraftRepository();
+    const discounted: Draft = {
+      ...draftFixture,
+      items: [{
+        ...draftFixture.items[0],
+        imageUrl: "https://example.test/water.png",
+        displayRatio: 0.5,
+        specialPrice: 45,
+        promotions: [{ id: "promo-1", label: "Акція тижня", price: 45 }],
+      }],
+      total: 90,
+    };
+
+    await repo.save("user-1", discounted);
+    expect(await repo.get(discounted.id, "user-1")).toEqual(discounted);
+  });
+
+  it("A7-02 rejects a stored row missing its display ratio", () => {
+    expect(() => DraftSchema.parse({
+      ...draftFixture,
+      items: [{ ...draftFixture.items[0], displayRatio: null }],
+    })).toThrow();
   });
 });
 
@@ -404,5 +433,47 @@ describe("DraftRepository (postgres)", () => {
     const repo = createPostgresDraftRepository(mockDb);
     const result = await repo.approve("draft-conc", "user-conc", "key-conc");
     expect(result).toEqual({ idempotencyKey: "key-conc" });
+  });
+
+  it("A7-02 writes presentation columns in the item insert", async () => {
+    const itemValues = vi.fn(async () => []);
+    const tx = {
+      select: vi.fn(() => ({
+        from: vi.fn(() => ({
+          where: vi.fn(() => ({ limit: vi.fn(async () => []) })),
+        })),
+      })),
+      insert: vi
+        .fn()
+        .mockImplementationOnce(() => ({
+          values: vi.fn(() => ({
+            returning: vi.fn(async () => [{ id: "00000000-0000-4000-8000-000000000099" }]),
+          })),
+        }))
+        .mockImplementationOnce(() => ({ values: vi.fn(async () => []) }))
+        .mockImplementationOnce(() => ({ values: itemValues })),
+    };
+    const mockDb = {
+      transaction: vi.fn(async (callback: (transaction: typeof tx) => Promise<Draft>) => callback(tx)),
+    } as unknown as DbClient;
+
+    await createPostgresDraftRepository(mockDb).save("user-1", {
+      ...draftFixture,
+      items: [{
+        ...draftFixture.items[0],
+        imageUrl: "https://example.test/milk.png",
+        displayRatio: 0.5,
+        specialPrice: 45,
+        promotions: [{ id: "promo-1", label: "Акція", price: 45 }],
+      }],
+      total: 90,
+    });
+
+    expect(itemValues).toHaveBeenCalledWith([expect.objectContaining({
+      imageUrl: "https://example.test/milk.png",
+      displayRatio: 0.5,
+      specialPrice: 45,
+      promotions: [{ id: "promo-1", label: "Акція", price: 45 }],
+    })]);
   });
 });

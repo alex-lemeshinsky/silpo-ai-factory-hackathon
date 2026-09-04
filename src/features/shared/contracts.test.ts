@@ -6,6 +6,7 @@ import {
   RawPurchaseReceiptSchema,
   SetCartProductsInputSchema,
   VerifiedCartSchema,
+  effectiveUnitPrice,
 } from "@/features/shared/contracts";
 import { err, ok } from "@/lib/result";
 
@@ -57,8 +58,11 @@ const draft = {
       productId: product.productId,
       externalProductId: product.externalProductId,
       name: product.name,
+      imageUrl: null,
+      displayRatio: 1,
       quantity: 2,
       price: product.price,
+      specialPrice: null,
       stock: product.stock,
       step: product.step,
       confidence: need.confidence,
@@ -66,6 +70,7 @@ const draft = {
       reasonCodes: need.reasonCodes,
       reason: "Купуєте приблизно раз на 7 днів",
       nutritionStatus: product.nutritionStatus,
+      promotions: [],
       alternatives: [],
     },
   ],
@@ -195,3 +200,52 @@ it("constructs typed success and failure results", () => {
     },
   });
 });
+
+it("A7-01 carries presentation fields and prices the total on the effective unit price", () => {
+  const discounted = {
+    ...draft,
+    items: [{ ...draft.items[0], specialPrice: 15, promotions: [{ id: "promo-1", label: "Акція тижня", price: 15 }] }],
+    total: 30,
+  };
+
+  const parsed = DraftSchema.parse(discounted);
+  expect(parsed.items[0].specialPrice).toBe(15);
+  expect(parsed.items[0].promotions).toHaveLength(1);
+  expect(effectiveUnitPrice(parsed.items[0])).toBe(15);
+  expect(effectiveUnitPrice(DraftSchema.parse(draft).items[0])).toBe(20);
+});
+
+it("A7-01 rejects a special price above the regular price", () => {
+  expect(() => DraftSchema.parse({
+    ...draft,
+    items: [{ ...draft.items[0], specialPrice: 25 }],
+    total: 50,
+  })).toThrow();
+});
+
+it("A7-01 rejects a total computed on the regular price when a discount exists", () => {
+  expect(() => DraftSchema.parse({
+    ...draft,
+    items: [{ ...draft.items[0], specialPrice: 15 }],
+    total: 40,
+  })).toThrow();
+});
+
+it("A7-01 rejects duplicate promotion identifiers on one item", () => {
+  expect(() => DraftSchema.parse({
+    ...draft,
+    items: [{
+      ...draft.items[0],
+      promotions: [
+        { id: "promo-1", label: "Акція", price: null },
+        { id: "promo-1", label: "Друга акція", price: null },
+      ],
+    }],
+  })).toThrow();
+});
+
+it("A7-01 rejects a non-URL image and a non-positive display ratio", () => {
+  expect(() => DraftSchema.parse({ ...draft, items: [{ ...draft.items[0], imageUrl: "not-a-url" }] })).toThrow();
+  expect(() => DraftSchema.parse({ ...draft, items: [{ ...draft.items[0], displayRatio: 0 }] })).toThrow();
+});
+
