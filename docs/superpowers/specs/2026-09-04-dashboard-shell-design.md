@@ -166,7 +166,7 @@ The demo connection label deliberately differs from the banner string. Task 18's
 
 Rendered only when `phase.kind === "draft"`.
 
-The `h1` — the page's only one — reads «N товарів уже просяться до кошика», where the noun agrees with `draft.items.length` through `Intl.PluralRules("uk-UA")`: `one` → «товар», `few` → «товари», everything else → «товарів». An empty draft renders «Поки що нічого не проситься до кошика» and no total.
+The `h1` — the page's only one — agrees with `draft.items.length` through `Intl.PluralRules("uk-UA")`. Both the noun and the verb inflect, so the helper selects a whole phrase: `one` → «N товар уже проситься до кошика», `few` → «N товари уже просяться до кошика», everything else → «N товарів уже просяться до кошика». The last form is the one design-system §6 quotes. An empty draft renders «Поки що нічого не проситься до кошика» and no total.
 
 Below it: the total as «Разом X ₴», and `draft.summary` when it is non-empty. The summary is server copy and is rendered as text, never as markup.
 
@@ -178,7 +178,7 @@ The hero shows no CTA and no checkout; both belong to the summary.
 
 Heading `h2` «Прогноз». Contents:
 
-- «Знайшли N регулярних потреб», pluralized as in D14-04;
+- «Регулярних потреб: N». The label form avoids the adjective agreement that «Знайшли N регулярних потреб» would need across one, few, and many;
 - «Історія за останні {PREDICTION_CONFIG.historyWindowDays} днів»;
 - «Висока впевненість: N» and «Середня впевненість: N», counted from `confidenceBand`;
 - «Дані до {formatted trainingCutoff}».
@@ -191,7 +191,7 @@ Heading `h2` «Вигода».
 
 Discount total is `Σ quantity × (price − specialPrice)` over items where `specialPrice !== null`. Above zero it renders «Знижки в чернетці: X ₴» followed by «Ціни перевіримо ще раз перед додаванням у кошик». At zero it renders «Знижок у чернетці немає». The word «економія» does not appear in any state, because the figure comes from catalog snapshots rather than a verified cart.
 
-When `loyaltyBonusAvailable !== null` the card renders «Доступно N бонусів» and «Бонуси не застосовуються автоматично». When it is null the card renders no bonus row. The bonus is never included in, subtracted from, or compared against any total.
+When `loyaltyBonusAvailable !== null` the card renders «Доступно N бонус/бонуси/бонусів», pluralized as in D14-04, and «Бонуси не застосовуються автоматично». When it is null the card renders no bonus row. The bonus is never included in, subtracted from, or compared against any total.
 
 ### D14-07 — Product card
 
