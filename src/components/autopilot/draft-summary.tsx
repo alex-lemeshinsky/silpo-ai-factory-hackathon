@@ -8,7 +8,6 @@ export interface DraftSummaryProps {
 
 export function DraftSummary({ draft, cart }: DraftSummaryProps) {
   const count = draft.items.length;
-  const hasUnavailable = draft.items.some((item) => item.stock === 0 || item.quantity > item.stock);
   const hasError = cart?.validations.some((validation) => validation.severity === "error") ?? false;
   const links = draft.status === "verified" && cart !== null && !hasError
     ? cart.checkoutLinks
@@ -24,21 +23,9 @@ export function DraftSummary({ draft, cart }: DraftSummaryProps) {
         <p className="autopilot-summary-note">Немає що додавати</p>
       )}
       {draft.status === "ready" && count > 0 && (
-        <>
-          <button
-            type="button"
-            className="autopilot-cta"
-            disabled={hasUnavailable}
-            aria-describedby={hasUnavailable ? "autopilot-cta-reason" : undefined}
-          >
-            Додати у кошик “Сільпо”
-          </button>
-          {hasUnavailable && (
-            <p id="autopilot-cta-reason" className="autopilot-summary-note">
-              Спочатку розберіться з позиціями, яких немає в наявності
-            </p>
-          )}
-        </>
+        <button type="button" className="autopilot-cta">
+          Додати у кошик “Сільпо”
+        </button>
       )}
       {links !== null && (
         <p className="autopilot-checkout">

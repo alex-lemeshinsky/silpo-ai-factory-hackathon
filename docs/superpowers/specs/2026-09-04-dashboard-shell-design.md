@@ -121,6 +121,8 @@ export interface DraftDashboardProps {
 }
 ```
 
+The draft arm takes `ActionableDraft` — `Draft` narrowed to exclude `syncing` and `generating`. Those two statuses describe work that happens before a draft exists, so a draft carrying one has no dashboard to render; excluding them at the type level stops that state from falling through to a priced dashboard with no status panel.
+
 Mode has exactly one source in each arm: `phase.mode` while pending, `phase.draft.mode` once a draft exists. No prop can contradict the draft. No component accepts a function prop, `children`, or a class-name override, and none declares `"use client"`.
 
 ### D14-02 — Page composition
@@ -189,9 +191,9 @@ The card presents these as measurements of the draft. It makes no claim about ac
 
 Heading `h2` «Вигода».
 
-Discount total is `Σ quantity × (price − specialPrice)` over items where `specialPrice !== null`. Above zero it renders «Знижки в чернетці: X ₴» followed by «Ціни перевіримо ще раз перед додаванням у кошик». At zero it renders «Знижок у чернетці немає». The word «економія» does not appear in any state, because the figure comes from catalog snapshots rather than a verified cart.
+Discount total is `Σ quantity × (price − specialPrice)` over items where `specialPrice !== null`. At or above one kopiyka it renders «Знижки в чернетці: X ₴» followed by «Ціни перевіримо ще раз перед додаванням у кошик». Below that it renders «Знижок у чернетці немає»: a residue smaller than `0.01` comes from floating-point accumulation and would otherwise print as «Знижки в чернетці: 0,00 ₴». The word «економія» does not appear in any state, because the figure comes from catalog snapshots rather than a verified cart.
 
-When `loyaltyBonusAvailable !== null` the card renders «Доступно N бонус/бонуси/бонусів», pluralized as in D14-04, and «Бонуси не застосовуються автоматично». When it is null the card renders no bonus row. The bonus is never included in, subtracted from, or compared against any total.
+When `loyaltyBonusAvailable !== null` the card renders «Доступно N бонус/бонуси/бонусів», with `N` formatted by `formatNumber` and pluralized as in D14-04, and «Бонуси не застосовуються автоматично». When it is null the card renders no bonus row. The bonus is never included in, subtracted from, or compared against any total.
 
 ### D14-07 — Product card
 
@@ -204,15 +206,17 @@ Heading `h3` carrying `item.name`. Required content:
 | Price, no discount | «X ₴» from `price` |
 | Price, discounted | «X ₴» from `specialPrice`, plus «Було Y ₴» in a `<s>` element |
 | Promotions | Each `promotion.label` as text; a promotion with a price also renders it |
-| Stock, `stock === 0` | «Немає в наявності» |
-| Stock, `stock < quantity` | «Залишилось N» |
-| Stock, otherwise | «В наявності» |
+| Stock | «В наявності: N» |
 | Confidence | «Висока впевненість» or «Середня впевненість», text, never colour alone |
 | Reason | `item.reason` as text |
 | Nutrition `insufficient` | «Даних про склад недостатньо» |
 | Nutrition `known` | No nutrition claim in this task; comparison is Task 15's |
 | Alternatives | «Доступні заміни: N» when the list is non-empty; the picker itself is Task 15's |
 | Validations | Rows from `cart.validations` whose `productId` matches, prefixed «Помилка» or «Увага» |
+
+`DraftItemSchema` requires `0 < quantity <= stock`, so a draft item is always available at its snapshot quantity and no out-of-stock label is reachable. Reduced or exhausted stock is discovered during cart verification and reaches the card as a per-item validation. Section 9 records the contract question this raises for Task 16.
+
+Quantity and stock are formatted with `formatNumber`, not interpolated raw: `displayRatio` exists because weight goods carry fractional quantities, and Ukrainian writes those with a decimal comma.
 
 The card renders no stepper, no remove control, and no replace control. Task 14 is read-only, and a control that does nothing is worse than an absent one.
 
@@ -230,7 +234,9 @@ When `phase.kind === "pending"`, no hero, no cards, no product section, and no s
 
 The sticky summary renders when `phase.kind === "draft"`. It shows the item count as «N позиція/позиції/позицій», pluralized by the same helper as D14-04, and «Разом X ₴» from `draft.total`, which is a server snapshot; the component never recomputes the total it displays.
 
-The CTA «Додати у кошик “Сільпо”» renders as `<button type="button">` only when `draft.status === "ready"`. It is disabled, with `aria-disabled="true"` and a visible reason, when any item has `stock === 0` or `quantity > stock`; the reason line reads «Спочатку розберіться з позиціями, яких немає в наявності». An empty draft renders no CTA at all and the line «Немає що додавати», because a disabled control offering nothing is worse than its absence. The button carries no click handler in this task.
+The CTA «Додати у кошик “Сільпо”» renders as `<button type="button">` only when `draft.status === "ready"`, and it carries no click handler in this task. An empty draft renders no CTA at all and the line «Немає що додавати», because a disabled control offering nothing is worse than its absence.
+
+The CTA has no disabled state here. Every item in a schema-valid draft is confirmable by construction, so a stock-based gate would be unreachable code that reads as an implemented safeguard. The gate belongs to Task 15, where a user-entered quantity can exceed `step` or stock for the first time.
 
 For every other status the CTA is absent and the summary shows the status line from D14-11 instead. Nothing in the summary implies a write has occurred.
 
@@ -256,7 +262,7 @@ If any condition fails, both links are absent from the document — not hidden b
 
 The blocked title is fixed by Task 18, whose end-to-end test asserts `/потребує уваги/` after a blocked commit.
 
-`ValidationList` renders only cart-level validations — those whose `productId` is null — with the severity word «Помилка» or «Увага» and the message. Validations naming a product belong to that product's card under D14-07, so no validation renders twice. A warning never renders as success, and an error never renders beside a checkout link.
+`ValidationList` renders only cart-level validations — those whose `productId` is null — with the severity word «Помилка» or «Увага» and the message. Validations naming a product belong to that product's card under D14-07, so no validation renders twice. Its accessible name follows its contents: «Помилки кошика» when any row is an error, «Попередження кошика» otherwise, so assistive technology is never told that a warning-only list is a list of errors. A warning never renders as success, and an error never renders beside a checkout link.
 
 ### D14-12 — Demo labelling
 
@@ -343,7 +349,8 @@ These are recorded rather than silently resolved.
 1. **Draft wiring has no owner.** Task 13 creates `POST /api/drafts` but its file list excludes `src/app/dashboard/page.tsx`, and no later task claims it. Someone must be authorized to replace D14-02's pending phase with real data.
 2. **Tailwind is unused.** After this task the dependency remains installed and importable while the convention forbids its utilities. A small harness task should either remove it or record why it stays.
 3. **Branch names are unavailable.** `CartContext` carries `branchId` but no human-readable name, so the header omits the branch that design-system §7 lists. Resolving it requires a catalog or context lookup owned by Task 10 or 11.
-4. **Post-verification savings are not computable.** `VerifiedCart` carries `unitPrice` but no regular price, so no honest savings figure exists after a commit. Task 16 should decide whether the verified cart needs one.
+4. **A draft cannot represent an unavailable item.** `DraftItemSchema` requires `0 < quantity <= stock`, so `stock === 0` and `quantity > stock` are both unrepresentable. Product specification §8 requires that an unavailable product cannot be confirmed and that the user replaces or removes it, and design-system §9 requires confirm to be disabled when quantity violates stock — neither state can occur today. Task 16 re-reads stock before the write and must show the old and new values, so it is the task that needs this state and should decide whether to relax the contract, alongside a construction-time check that keeps a resolver from proposing more than it saw in stock. Task 14 renders only what the contract permits rather than pre-empting that decision.
+5. **Post-verification savings are not computable.** `VerifiedCart` carries `unitPrice` but no regular price, so no honest savings figure exists after a commit. Task 16 should decide whether the verified cart needs one.
 
 ## 10. Related documents
 

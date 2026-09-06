@@ -204,6 +204,22 @@ main.autopilot-main {
   box-shadow: var(--autopilot-shadow-raised);
 }
 
+/*
+ * On mobile the summary spans the full bottom width (design system §6). Fixed
+ * positioning takes it out of flow so main's bottom padding becomes real
+ * clearance for the last card instead of dead space beneath a sticky bar.
+ */
+@media (max-width: 599px) {
+  .autopilot-summary {
+    position: fixed;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    margin-top: 0;
+    border-radius: 0;
+  }
+}
+
 .autopilot-summary p { margin: 0; }
 .autopilot-summary-total { font-size: var(--autopilot-font-h3); font-variant-numeric: tabular-nums; }
 .autopilot-summary-note { color: var(--autopilot-muted); font-size: var(--autopilot-font-small); }

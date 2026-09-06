@@ -7,9 +7,19 @@ import { DraftProductCard } from "./draft-product-card";
 import { DraftSummary } from "./draft-summary";
 import { StatusPanel, ValidationList, type StatusTone } from "./status-panel";
 
+export type PendingStatus = Extract<DraftStatus, "syncing" | "generating">;
+
+/**
+ * A draft the user can act on. The two pending statuses describe work that
+ * happens before a draft exists, so a draft carrying one has no dashboard to
+ * render: excluding them here makes that state unrepresentable rather than
+ * silently falling through DRAFT_PANELS to no status panel at all.
+ */
+export type ActionableDraft = Draft & { status: Exclude<DraftStatus, PendingStatus> };
+
 export type DraftPhase =
-  | { kind: "pending"; status: Extract<DraftStatus, "syncing" | "generating">; mode: DataMode }
-  | { kind: "draft"; draft: Draft };
+  | { kind: "pending"; status: PendingStatus; mode: DataMode }
+  | { kind: "draft"; draft: ActionableDraft };
 
 export interface DraftDashboardProps {
   phase: DraftPhase;
@@ -24,7 +34,7 @@ interface PanelCopy {
   tone: StatusTone;
 }
 
-const PENDING_PANELS: Record<"syncing" | "generating", PanelCopy> = {
+const PENDING_PANELS: Record<PendingStatus, PanelCopy> = {
   syncing: {
     title: "Синхронізуємо історію покупок",
     description: "Це займе кілька секунд.",
@@ -37,7 +47,7 @@ const PENDING_PANELS: Record<"syncing" | "generating", PanelCopy> = {
   },
 };
 
-const DRAFT_PANELS: Partial<Record<DraftStatus, PanelCopy>> = {
+const DRAFT_PANELS: Partial<Record<ActionableDraft["status"], PanelCopy>> = {
   confirming: {
     title: "Перевіряємо ціну та наявність",
     description: "Не закривайте сторінку.",

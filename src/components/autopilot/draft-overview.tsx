@@ -1,6 +1,10 @@
 import type { Draft } from "@/features/shared/contracts";
 import { PREDICTION_CONFIG } from "@/features/prediction/features";
-import { formatDay, formatHryvnia, pluralizeUk } from "./format";
+import { formatDay, formatHryvnia, formatNumber, pluralizeUk } from "./format";
+
+// One kopiyka: below this a discount rounds to «0,00 ₴», so claiming one would
+// be false precision from accumulated floating-point residue.
+const MINIMUM_DISPLAYED_DISCOUNT = 0.01;
 
 export interface DraftOverviewProps {
   draft: Draft;
@@ -49,7 +53,7 @@ export function DraftOverview({ draft, loyaltyBonusAvailable }: DraftOverviewPro
         </section>
         <section className="autopilot-card" aria-labelledby="autopilot-value-title">
           <h2 id="autopilot-value-title">Вигода</h2>
-          {discount > 0 ? (
+          {discount >= MINIMUM_DISPLAYED_DISCOUNT ? (
             <>
               <p>Знижки в чернетці: {formatHryvnia(discount)}</p>
               <p>Ціни перевіримо ще раз перед додаванням у кошик</p>
@@ -60,7 +64,7 @@ export function DraftOverview({ draft, loyaltyBonusAvailable }: DraftOverviewPro
           {loyaltyBonusAvailable !== null && (
             <>
               <p>
-                Доступно {loyaltyBonusAvailable}{" "}
+                Доступно {formatNumber(loyaltyBonusAvailable)}{" "}
                 {pluralizeUk(loyaltyBonusAvailable, ["бонус", "бонуси", "бонусів"])}
               </p>
               <p>Бонуси не застосовуються автоматично</p>

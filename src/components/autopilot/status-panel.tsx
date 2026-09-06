@@ -29,8 +29,12 @@ export function ValidationList({ validations }: { validations: CartValidation[] 
     return null;
   }
 
+  const label = cartLevel.some((validation) => validation.severity === "error")
+    ? "Помилки кошика"
+    : "Попередження кошика";
+
   return (
-    <ul className="autopilot-validations" aria-label="Помилки кошика">
+    <ul className="autopilot-validations" aria-label={label}>
       {cartLevel.map((validation, index) => (
         <li key={`${validation.code}-${index}`} className="autopilot-validation">
           <span className="autopilot-validation-severity">

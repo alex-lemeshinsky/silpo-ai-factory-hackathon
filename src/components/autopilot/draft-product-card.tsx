@@ -1,19 +1,16 @@
-import type { CartValidation, DraftItem } from "@/features/shared/contracts";
-import { formatHryvnia } from "./format";
+import { effectiveUnitPrice, type CartValidation, type DraftItem } from "@/features/shared/contracts";
+import { formatHryvnia, formatNumber } from "./format";
 
 export interface DraftProductCardProps {
   item: DraftItem;
   validations: CartValidation[];
 }
 
+// DraftItemSchema guarantees 0 < quantity <= stock, so a draft item is always
+// available at its snapshot quantity. Reduced or exhausted stock is discovered
+// during cart verification and reaches this card as a per-item validation.
 function stockLabel(item: DraftItem): string {
-  if (item.stock === 0) {
-    return "Немає в наявності";
-  }
-  if (item.stock < item.quantity) {
-    return `Залишилось ${item.stock}`;
-  }
-  return "В наявності";
+  return `В наявності: ${formatNumber(item.stock)}`;
 }
 
 export function DraftProductCard({ item, validations }: DraftProductCardProps) {
@@ -28,10 +25,10 @@ export function DraftProductCard({ item, validations }: DraftProductCardProps) {
         )}
       </div>
       <h3 className="autopilot-product-name">{item.name}</h3>
-      <p className="autopilot-product-quantity">Кількість: {item.quantity}</p>
+      <p className="autopilot-product-quantity">Кількість: {formatNumber(item.quantity)}</p>
       <p className="autopilot-product-price">
         <span className="autopilot-price-current">
-          {formatHryvnia(item.specialPrice ?? item.price)}
+          {formatHryvnia(effectiveUnitPrice(item))}
         </span>
         {item.specialPrice !== null && (
           <s className="autopilot-price-previous">Було {formatHryvnia(item.price)}</s>

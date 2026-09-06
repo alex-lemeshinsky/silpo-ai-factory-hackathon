@@ -5,6 +5,7 @@ const hryvnia = new Intl.NumberFormat("uk-UA", {
   maximumFractionDigits: 2,
 });
 const plural = new Intl.PluralRules("uk-UA");
+const decimal = new Intl.NumberFormat("uk-UA", { maximumFractionDigits: 3 });
 const day = new Intl.DateTimeFormat("uk-UA", {
   timeZone: KYIV_TIME_ZONE,
   day: "numeric",
@@ -18,6 +19,10 @@ const time = new Intl.DateTimeFormat("uk-UA", {
 
 export function formatHryvnia(value: number): string {
   return `${hryvnia.format(value)} ₴`;
+}
+
+export function formatNumber(value: number): string {
+  return decimal.format(value);
 }
 
 export function pluralizeUk(count: number, forms: [string, string, string]): string {

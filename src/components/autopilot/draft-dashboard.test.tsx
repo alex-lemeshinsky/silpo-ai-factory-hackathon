@@ -1,9 +1,12 @@
 import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import type {
-  CartContext, Draft, DraftItem, ProductCandidate, VerifiedCart,
+import {
+  CartContextSchema, DraftSchema, effectiveUnitPrice, ProductCandidateSchema, VerifiedCartSchema,
+  type CartContext, type Draft, type DraftItem, type ProductCandidate, type VerifiedCart,
 } from "@/features/shared/contracts";
-import { DraftDashboard, type DraftDashboardProps } from "./draft-dashboard";
+import {
+  DraftDashboard, type ActionableDraft, type DraftDashboardProps,
+} from "./draft-dashboard";
 
 const item = (overrides: Partial<DraftItem> = {}): DraftItem => ({
   productId: "water-1",
@@ -26,9 +29,12 @@ const item = (overrides: Partial<DraftItem> = {}): DraftItem => ({
   ...overrides,
 });
 
-const draft = (overrides: Partial<Draft> = {}): Draft => {
+// Every fixture is parsed by the contract that governs it in production, so a
+// test can never assert behaviour for a state the schema forbids. Building an
+// out-of-stock item here throws instead of silently exercising dead code.
+const draft = (overrides: Partial<Draft> = {}): ActionableDraft => {
   const items = overrides.items ?? [item()];
-  return {
+  const parsed = DraftSchema.parse({
     id: "draft-1",
     mode: "live",
     status: "ready",
@@ -39,11 +45,16 @@ const draft = (overrides: Partial<Draft> = {}): Draft => {
     ...overrides,
     items,
     total: overrides.total
-      ?? items.reduce((sum, entry) => sum + entry.quantity * (entry.specialPrice ?? entry.price), 0),
-  };
+      ?? items.reduce((sum, entry) => sum + effectiveUnitPrice(entry) * entry.quantity, 0),
+  });
+
+  if (parsed.status === "syncing" || parsed.status === "generating") {
+    throw new Error("a draft fixture must carry an actionable status");
+  }
+  return parsed as ActionableDraft;
 };
 
-const cartContext = (overrides: Partial<CartContext> = {}): CartContext => ({
+const cartContext = (overrides: Partial<CartContext> = {}): CartContext => CartContextSchema.parse({
   cartId: "cart-1",
   deliveryType: "delivery",
   city: "Київ",
@@ -57,7 +68,7 @@ const cartContext = (overrides: Partial<CartContext> = {}): CartContext => ({
   ...overrides,
 });
 
-const verifiedCart = (overrides: Partial<VerifiedCart> = {}): VerifiedCart => ({
+const verifiedCart = (overrides: Partial<VerifiedCart> = {}): VerifiedCart => VerifiedCartSchema.parse({
   cartId: "cart-1",
   status: "verified",
   items: [{ productId: "water-1", quantity: 2, unitPrice: 20, available: true }],
@@ -67,7 +78,7 @@ const verifiedCart = (overrides: Partial<VerifiedCart> = {}): VerifiedCart => ({
   ...overrides,
 });
 
-const alternative = (): ProductCandidate => ({
+const alternative = (): ProductCandidate => ProductCandidateSchema.parse({
   productId: "water-2",
   externalProductId: 102,
   slug: "water-2",
@@ -168,10 +179,11 @@ describe("DraftDashboard", () => {
   });
 
   it("D14-04 shows the server total and summary", () => {
-    renderDashboard();
+    const { container } = renderDashboard();
 
-    expect(screen.getAllByText("Разом 40,00 ₴")[0]).toBeVisible();
-    expect(screen.getByText("Схоже, вода скоро закінчиться")).toBeVisible();
+    const hero = within(container.querySelector(".autopilot-hero") as HTMLElement);
+    expect(hero.getByText("Разом 40,00 ₴")).toBeVisible();
+    expect(hero.getByText("Схоже, вода скоро закінчиться")).toBeVisible();
   });
 
   it("D14-04 renders its own headline and no total for an empty draft", () => {
@@ -234,7 +246,8 @@ describe("DraftDashboard", () => {
     const value = screen.getByRole("region", { name: "Вигода" });
     expect(within(value).getByText("Доступно 5 бонусів")).toBeVisible();
     expect(within(value).getByText("Бонуси не застосовуються автоматично")).toBeVisible();
-    expect(screen.getAllByText("Разом 40,00 ₴")[0]).toBeVisible();
+    expect(within(screen.getByRole("region", { name: "Підсумок чернетки" }))
+      .getByText("Разом 40,00 ₴")).toBeVisible();
   });
 
   it("D14-06 renders no bonus row when none is available", () => {
@@ -266,27 +279,36 @@ describe("DraftDashboard", () => {
     expect(product.getByText("15,00 ₴")).toBeVisible();
     expect(product.getByText("Було 20,00 ₴")).toBeVisible();
     expect(product.getByText("Акція тижня: 15,00 ₴")).toBeVisible();
-    expect(product.getByText("В наявності")).toBeVisible();
+    expect(product.getByText("В наявності: 10")).toBeVisible();
     expect(product.getByText("Висока впевненість")).toBeVisible();
     expect(product.getByText("Купуєте приблизно раз на 7 днів")).toBeVisible();
     expect(product.getByText("Даних про склад недостатньо")).toBeVisible();
   });
 
-  it("D14-07 renders each stock branch and the medium confidence label", () => {
-    const cases: Array<[Partial<DraftItem>, string]> = [
-      [{ stock: 0 }, "Немає в наявності"],
-      [{ stock: 1, quantity: 2 }, "Залишилось 1"],
-      [{ stock: 10 }, "В наявності"],
-    ];
+  it("D14-07 reports the stock snapshot and quantity in Ukrainian number format", () => {
+    renderDashboard({
+      phase: {
+        kind: "draft",
+        draft: draft({
+          items: [item({
+            stock: 7.5, quantity: 0.5, step: 0.5, confidence: 0.6, confidenceBand: "medium",
+          })],
+        }),
+      },
+    });
 
-    for (const [overrides, label] of cases) {
-      const { unmount } = renderDashboard({
-        phase: { kind: "draft", draft: draft({ items: [item({ ...overrides, confidence: 0.6, confidenceBand: "medium" })] }) },
-      });
-      expect(screen.getByText(label)).toBeVisible();
-      expect(screen.getByText("Середня впевненість")).toBeVisible();
-      unmount();
-    }
+    expect(screen.getByText("В наявності: 7,5")).toBeVisible();
+    expect(screen.getByText("Кількість: 0,5")).toBeVisible();
+    expect(screen.getByText("Середня впевненість")).toBeVisible();
+  });
+
+  it("D14-07 cannot build a draft item that is out of stock", () => {
+    // DraftItemSchema requires 0 < quantity <= stock, so an unavailable item is
+    // unrepresentable. The card therefore never renders an out-of-stock label and
+    // the summary never disables its CTA; cart verification surfaces reduced
+    // stock as a per-item validation instead. Spec §9 tracks this for Task 16.
+    expect(() => draft({ items: [item({ stock: 0 })] })).toThrow();
+    expect(() => draft({ items: [item({ stock: 1, quantity: 2 })] })).toThrow();
   });
 
   it("D14-07 counts alternatives and hides the image when none is supplied", () => {
@@ -362,17 +384,14 @@ describe("DraftDashboard", () => {
     expect(cta).toBeEnabled();
   });
 
-  it("D14-09 disables the CTA and explains why when an item is unavailable", () => {
-    for (const overrides of [{ stock: 0 }, { stock: 1, quantity: 2 }]) {
-      const { unmount } = renderDashboard({
-        phase: { kind: "draft", draft: draft({ items: [item(overrides)] }) },
-      });
+  it("D14-09 leaves the CTA enabled because every draft item is confirmable", () => {
+    renderDashboard({
+      phase: { kind: "draft", draft: draft({ items: [item({ quantity: 10, stock: 10 })] }) },
+    });
 
-      const cta = screen.getByRole("button", { name: "Додати у кошик “Сільпо”" });
-      expect(cta).toBeDisabled();
-      expect(cta).toHaveAccessibleDescription("Спочатку розберіться з позиціями, яких немає в наявності");
-      unmount();
-    }
+    const cta = screen.getByRole("button", { name: "Додати у кошик “Сільпо”" });
+    expect(cta).toBeEnabled();
+    expect(cta).not.toHaveAccessibleDescription();
   });
 
   it("D14-09 renders no CTA for an empty draft", () => {
@@ -412,21 +431,33 @@ describe("DraftDashboard", () => {
     }
   });
 
-  it("D14-10 hides checkout when links are absent or an error validation exists", () => {
-    const withoutLinks = renderDashboard({
+  it("D14-10 hides checkout when a verified cart carries no links", () => {
+    renderDashboard({
       phase: { kind: "draft", draft: draft({ status: "verified" }) },
       cart: verifiedCart({ checkoutLinks: null }),
     });
+
     expect(screen.queryByRole("link", { name: /Оформити/ })).toBeNull();
-    withoutLinks.unmount();
+  });
+
+  it("D14-10 hides checkout when the cart carries an error validation", () => {
+    // VerifiedCartSchema already forbids links alongside an error, so a cart
+    // that has both is unrepresentable and the component's own error gate is
+    // defence in depth rather than the only guard.
+    expect(() => verifiedCart({
+      validations: [{ severity: "error", code: "out_of_stock", message: "Товару немає", productId: null }],
+    })).toThrow();
 
     renderDashboard({
       phase: { kind: "draft", draft: draft({ status: "verified" }) },
       cart: verifiedCart({
+        checkoutLinks: null,
         validations: [{ severity: "error", code: "out_of_stock", message: "Товару немає", productId: null }],
       }),
     });
+
     expect(screen.queryByRole("link", { name: /Оформити/ })).toBeNull();
+    expect(screen.getByRole("list", { name: "Помилки кошика" })).toBeVisible();
   });
 
   it("D14-11 renders each pending state as the page heading with a polite live region", () => {
@@ -489,6 +520,22 @@ describe("DraftDashboard", () => {
     const card = screen.getByRole("heading", { level: 3, name: "Вода негазована 1,5 л" }).closest("li");
     expect(within(card as HTMLElement).getByText("Ціна змінилася")).toBeVisible();
     expect(within(card as HTMLElement).getByText("Увага")).toBeVisible();
+  });
+
+  it("D14-11 labels a warning-only cart list as warnings, not errors", () => {
+    renderDashboard({
+      phase: { kind: "draft", draft: draft({ status: "partially_committed" }) },
+      cart: verifiedCart({
+        status: "partially_committed",
+        checkoutLinks: null,
+        validations: [
+          { severity: "warning", code: "slot_soon", message: "Слот скоро завершиться", productId: null },
+        ],
+      }),
+    });
+
+    expect(screen.getByRole("list", { name: "Попередження кошика" })).toBeVisible();
+    expect(screen.queryByRole("list", { name: "Помилки кошика" })).toBeNull();
   });
 
   it("D14-01S keeps brand colour out of components", async () => {
