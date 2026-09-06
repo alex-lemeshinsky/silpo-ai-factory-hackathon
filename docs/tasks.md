@@ -630,7 +630,7 @@ git commit -m "feat: encrypt Silpo OAuth tokens"
 - Test: `src/features/silpo/oauth/auth-repository.test.ts`
 - Modify: `src/db/schema.ts`
 - Modify: `src/db/schema.test.ts`
-- Create: `drizzle/0002_silpo_oauth.sql`, `drizzle/meta/0002_snapshot.json`, `drizzle/meta/_journal.json`
+- Create: `drizzle/0003_silpo_oauth.sql`, `drizzle/meta/0003_snapshot.json`, `drizzle/meta/_journal.json`
 - Create: `src/features/silpo/oauth/provider.ts`
 - Test: `src/features/silpo/oauth/provider.test.ts`
 - Create: `src/features/silpo/oauth/transport.ts`
@@ -647,24 +647,24 @@ git commit -m "feat: encrypt Silpo OAuth tokens"
 - Consumes: `TokenVault`, `DbClient`, `getServerEnv()`, `@ai-sdk/mcp`, `@modelcontextprotocol/client`.
 - Produces: `createSilpoOAuthProvider(userId)`, `createSilpoOAuthService()`, `resolveSilpoSession(handle)`, `auth_sessions` and `silpo_oauth_states` persistence, start redirect, callback completion.
 
-- [ ] **Step 1: Install MCP clients**
+- [x] **Step 1: Install MCP clients**
 
 Run: `pnpm add @ai-sdk/mcp @modelcontextprotocol/client`.
 
-- [ ] **Step 2: Write failing OAuth tests**
+- [x] **Step 2: Write failing OAuth tests**
 
 Assert that start persists PKCE verifier and state, callback rejects a state mismatch, callback passes the authorization code to `transport.finishAuth(code)`, and a 401 triggers one refresh attempt before reauthorization.
 
-- [ ] **Step 3: Confirm failure**
+- [x] **Step 3: Confirm failure**
 
 Run: `pnpm vitest run src/features/silpo/oauth/provider.test.ts tests/integration/silpo-oauth.test.ts`
 Expected: FAIL because routes and provider do not exist.
 
-- [ ] **Step 4: Implement the provider**
+- [x] **Step 4: Implement the provider**
 
 Implement the official `OAuthClientProvider` contract for `https://mcp.silpo.ua/mcp`. Store client registration, PKCE verifier, state, and tokens server-side. Set the browser session cookie `HttpOnly`, `Secure` in production, `SameSite=Lax`, and with a bounded lifetime.
 
-- [ ] **Step 5: Verify and commit**
+- [x] **Step 5: Verify and commit**
 
 Run: `pnpm vitest run src/features/silpo/oauth/provider.test.ts tests/integration/silpo-oauth.test.ts && pnpm typecheck`
 Expected: PASS.
