@@ -172,6 +172,24 @@ The current official client supports the OAuth provider and `finishAuth` pattern
 
 Those moving sources are planning evidence, not a version pin. At implementation, install the two backlog dependencies, record the resolved versions, inspect exports/types, and compile the provider against the actual installed interface. Verify the same provider can type-check as the AI SDK MCP auth provider without unsafe casting. If packages disagree or are unavailable, report the dependency conflict; do not silently substitute legacy packages. The local Silpo snippet's legacy import path does not override Task 9's explicit package list.
 
+**Installed SDK Evidence (Stage 9.1):**
+- `@modelcontextprotocol/client`: version `2.0.0`
+  - npm: [https://www.npmjs.com/package/@modelcontextprotocol/client/v/2.0.0](https://www.npmjs.com/package/@modelcontextprotocol/client/v/2.0.0)
+  - GitHub: [https://github.com/modelcontextprotocol/typescript-sdk](https://github.com/modelcontextprotocol/typescript-sdk)
+  - Verified exports and declarations:
+    - `type OAuthClientProvider`: official client provider contract including `redirectUrl`, `clientMetadata`, `tokens(ctx?)`, `saveTokens(tokens, ctx?)`, `redirectToAuthorization(url)`, `saveCodeVerifier(codeVerifier)`, `codeVerifier()`, `saveDiscoveryState(state)`, `discoveryState()`, `invalidateCredentials(scope)`.
+    - `type StoredOAuthTokens`: `OAuthTokens & { issuer?: string }`.
+    - `type StoredOAuthClientInformation`: `OAuthClientInformationMixed & { issuer?: string }`.
+    - `type OAuthDiscoveryState`: RFC 9728 and AS metadata cache.
+    - `StreamableHTTPClientTransport`: provides `finishAuth(authorizationCode: string, iss?: string): Promise<void>` and accepts `authProvider?: AuthProvider | OAuthClientProvider`.
+    - `Client`: official client supporting `listTools`.
+- `@ai-sdk/mcp`: version `2.0.45`
+  - npm: [https://www.npmjs.com/package/@ai-sdk/mcp/v/2.0.45](https://www.npmjs.com/package/@ai-sdk/mcp/v/2.0.45)
+  - GitHub: [https://github.com/vercel/ai/tree/main/packages/mcp](https://github.com/vercel/ai/tree/main/packages/mcp)
+  - Verified exports and declarations:
+    - `type OAuthClientProvider`: accepted by `authProvider?: OAuthClientProvider` in `MCPClientConfig` / transport options.
+- Conformance: The return type of `createSilpoOAuthProvider` (`SilpoOAuthProvider`) structurally satisfies both `@modelcontextprotocol/client`'s `OAuthClientProvider` and `@ai-sdk/mcp`'s `OAuthClientProvider` without `as unknown as` casts. Compile-time conformance assertions are tracked in `src/features/silpo/oauth/provider.test.ts`.
+
 ## 7. Acceptance matrix
 
 | ID | Required evidence | Primary test location |

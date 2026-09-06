@@ -1,14 +1,12 @@
-import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import { and, eq, isNotNull, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
 
 import type { DbClient } from "@/db/client";
 import { mcpConnections } from "@/db/schema";
 import { getServerEnv } from "@/lib/env";
+import { openBytes, sealBytes } from "./envelope";
 
 const KEY_BYTES = 32;
-const IV_BYTES = 12;
-const AUTH_TAG_BYTES = 16;
 const ENVELOPE_VERSION = 1;
 const SECRET_SHAPED_KEY = /secret|token|password|assertion|credential/i;
 const UNREADABLE_MESSAGE = "stored credentials could not be authenticated";
@@ -163,37 +161,25 @@ function unreadable(): TokenVaultError {
   return new TokenVaultError("envelope_unreadable", UNREADABLE_MESSAGE);
 }
 
-function decodeBase64(value: string, expectedBytes?: number): Buffer {
-  const decoded = Buffer.from(value, "base64");
-  const canonical = decoded.toString("base64").replace(/=+$/, "") === value.replace(/=+$/, "");
-  if (decoded.byteLength === 0 || !canonical) {
-    throw unreadable();
-  }
-  if (expectedBytes !== undefined && decoded.byteLength !== expectedBytes) {
-    throw unreadable();
-  }
-  return decoded;
-}
-
 function encryptEnvelope(
   key: Buffer,
   userId: string,
   secrets: { accessToken: string; refreshToken: string | null; clientSecret: string | null },
 ): Pick<TokenEnvelopeRow, "tokenCiphertext" | "tokenIv" | "tokenAuthTag"> {
-  const iv = randomBytes(IV_BYTES);
-  const cipher = createCipheriv("aes-256-gcm", key, iv);
-  cipher.setAAD(Buffer.from(userId, "utf8"));
-  const plaintext = JSON.stringify({
-    version: ENVELOPE_VERSION,
-    accessToken: secrets.accessToken,
-    refreshToken: secrets.refreshToken,
-    clientSecret: secrets.clientSecret,
-  });
-  const ciphertext = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
+  const plaintext = Buffer.from(
+    JSON.stringify({
+      version: ENVELOPE_VERSION,
+      accessToken: secrets.accessToken,
+      refreshToken: secrets.refreshToken,
+      clientSecret: secrets.clientSecret,
+    }),
+    "utf8",
+  );
+  const sealed = sealBytes(key, userId, plaintext);
   return {
-    tokenCiphertext: ciphertext.toString("base64"),
-    tokenIv: iv.toString("base64"),
-    tokenAuthTag: cipher.getAuthTag().toString("base64"),
+    tokenCiphertext: sealed.ciphertext,
+    tokenIv: sealed.iv,
+    tokenAuthTag: sealed.authTag,
   };
 }
 
@@ -202,23 +188,20 @@ function decryptEnvelope(
   userId: string,
   row: z.infer<typeof storedRowSchema>,
 ): z.infer<typeof envelopePayloadSchema> {
-  const iv = decodeBase64(row.tokenIv, IV_BYTES);
-  const authTag = decodeBase64(row.tokenAuthTag, AUTH_TAG_BYTES);
-  const ciphertext = decodeBase64(row.tokenCiphertext);
-
-  let plaintext: string;
+  let plaintextBuffer: Buffer;
   try {
-    const decipher = createDecipheriv("aes-256-gcm", key, iv);
-    decipher.setAAD(Buffer.from(userId, "utf8"));
-    decipher.setAuthTag(authTag);
-    plaintext = Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString("utf8");
+    plaintextBuffer = openBytes(key, userId, {
+      ciphertext: row.tokenCiphertext,
+      iv: row.tokenIv,
+      authTag: row.tokenAuthTag,
+    });
   } catch {
     throw unreadable();
   }
 
   let parsed: unknown;
   try {
-    parsed = JSON.parse(plaintext);
+    parsed = JSON.parse(plaintextBuffer.toString("utf8"));
   } catch {
     throw unreadable();
   }

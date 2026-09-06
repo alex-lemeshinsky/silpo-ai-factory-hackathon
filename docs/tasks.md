@@ -617,18 +617,35 @@ git commit -m "feat: encrypt Silpo OAuth tokens"
 
 ### Task 9: Silpo OAuth start and callback
 
-**Planning:** [Specification](./superpowers/specs/2026-09-06-silpo-oauth-design.md) · [Implementation plan](./superpowers/plans/2026-09-06-silpo-oauth.md). Proposed storage/file-ownership expansion requires controller or user approval before implementation; the file list below remains the current approved scope.
+**Planning:** [Specification](./superpowers/specs/2026-09-06-silpo-oauth-design.md) · [Implementation plan](./superpowers/plans/2026-09-06-silpo-oauth.md). Scope and storage expansion approved per spec section 3.
 
 **Files:**
+- Modify: `docs/tasks.md`
+- Modify: `docs/project-architecture.md`
+- Modify: `package.json`, `pnpm-lock.yaml`
+- Create: `src/features/silpo/oauth/envelope.ts`
+- Test: `src/features/silpo/oauth/envelope.test.ts`
+- Modify: `src/features/silpo/oauth/token-vault.ts` (shared envelope helper extraction only)
+- Create: `src/features/silpo/oauth/auth-repository.ts`
+- Test: `src/features/silpo/oauth/auth-repository.test.ts`
+- Modify: `src/db/schema.ts`
+- Modify: `src/db/schema.test.ts`
+- Create: `drizzle/0002_silpo_oauth.sql`, `drizzle/meta/0002_snapshot.json`, `drizzle/meta/_journal.json`
 - Create: `src/features/silpo/oauth/provider.ts`
+- Test: `src/features/silpo/oauth/provider.test.ts`
+- Create: `src/features/silpo/oauth/transport.ts`
+- Test: `src/features/silpo/oauth/transport.test.ts`
+- Create: `src/features/silpo/oauth/service.ts`
+- Test: `src/features/silpo/oauth/service.test.ts`
 - Create: `src/app/api/auth/silpo/start/route.ts`
 - Create: `src/app/api/auth/silpo/callback/route.ts`
-- Test: `src/features/silpo/oauth/provider.test.ts`
-- Test: `tests/integration/silpo-oauth.test.ts`
+- Create: `tests/integration/silpo-oauth.test.ts`
+- Create: `tests/integration/silpo-oauth-postgres.test.ts`
+- Modify: `vitest.config.ts`
 
 **Interfaces:**
-- Consumes: `TokenVault`.
-- Produces: `createSilpoOAuthProvider(userId)`, start redirect, callback completion.
+- Consumes: `TokenVault`, `DbClient`, `getServerEnv()`, `@ai-sdk/mcp`, `@modelcontextprotocol/client`.
+- Produces: `createSilpoOAuthProvider(userId)`, `createSilpoOAuthService()`, `resolveSilpoSession(handle)`, `auth_sessions` and `silpo_oauth_states` persistence, start redirect, callback completion.
 
 - [ ] **Step 1: Install MCP clients**
 

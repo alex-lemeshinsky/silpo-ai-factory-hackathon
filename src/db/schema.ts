@@ -1,5 +1,6 @@
 import {
   doublePrecision,
+  index,
   integer,
   jsonb,
   pgTable,
@@ -10,6 +11,7 @@ import {
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import type { Promotion } from "@/features/shared/contracts";
+
 
 // 1. users
 export const users = pgTable("users", {
@@ -189,3 +191,42 @@ export const draftApprovals = pgTable("draft_approvals", {
   idempotencyKey: text("idempotency_key").notNull().unique(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
+
+// 13. auth_sessions
+export const authSessions = pgTable(
+  "auth_sessions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    handleHash: text("handle_hash").notNull().unique(),
+    status: text("status").notNull(), // "pending" | "authenticated" | "revoked"
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index("auth_sessions_user_id_idx").on(table.userId),
+    index("auth_sessions_expires_at_idx").on(table.expiresAt),
+  ],
+);
+
+// 14. silpo_oauth_states
+export const silpoOAuthStates = pgTable(
+  "silpo_oauth_states",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .unique()
+      .references(() => users.id, { onDelete: "cascade" }),
+    version: integer("version").notNull().default(1),
+    phase: text("phase").notNull().default("idle"), // "idle" | "pending" | "processing"
+    bindingHash: text("binding_hash"),
+    flowExpiresAt: timestamp("flow_expires_at", { withTimezone: true }),
+    ciphertext: text("ciphertext").notNull(),
+    iv: text("iv").notNull(),
+    authTag: text("auth_tag").notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+);

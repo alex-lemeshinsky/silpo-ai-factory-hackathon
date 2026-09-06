@@ -126,7 +126,7 @@ createPostgresAuthRepository(options: { db: DbClient; encryptionKey: Buffer }): 
 
 Widen the in-memory factory only for tests with `rawState(userId): SealedBytes | null` and `rawSession(handleHash): AuthSession | null`, both returning clones. These allow storage assertions without exposing them through the production interface. Validate state with local schemas after decryption; provider adds SDK-specific validation before converting to/from the normalized registration/discovery fields above. Unsupported required protocol metadata becomes `invalid_external_data`, never guessed defaults.
 
-## Stage 9.1 — Resolve scope and prove installed boundaries
+## Task 1: Stage 9.1 — Resolve scope and prove installed boundaries
 
 **Files:** `docs/tasks.md`, `docs/project-architecture.md`, `package.json`, `pnpm-lock.yaml`, `provider.test.ts`.
 
@@ -152,7 +152,7 @@ pnpm vitest run src/features/silpo/oauth/provider.test.ts tests/integration/silp
 
 Expected initial failure: implementation modules are absent. A package resolution or configuration failure is a dependency problem, not a valid behavior-test red.
 
-## Stage 9.2 — Share cryptography without changing Task 8
+## Task 2: Stage 9.2 — Share cryptography without changing Task 8
 
 **Files:** `envelope.ts`, `envelope.test.ts`, `token-vault.ts`.
 
@@ -194,7 +194,7 @@ return { ciphertext: ciphertext.toString("base64"), iv: iv.toString("base64"), a
 Require a 32-byte key; preserve canonical base64/IV/tag validation from the current vault on open. Throw fixed, secret-free primitive errors. The vault maps open failures back to `TokenVaultError("envelope_unreadable", ...)`, retains its version probe and JSON schemas, and preserves the exact payload serialization/AAD used by existing ciphertext.
 - [ ] Add wrong-key, bad-IV, bad-tag, malformed-base64 and byte-tampering cases. Run `pnpm vitest run src/features/silpo/oauth/envelope.test.ts src/features/silpo/oauth/token-vault.test.ts`. Both must pass without weakening existing tests.
 
-## Stage 9.3 — Persist session and OAuth lifecycle atomically
+## Task 3: Stage 9.3 — Persist session and OAuth lifecycle atomically
 
 **Files:** `auth-repository.ts`, `.test.ts`, `src/db/schema.ts`, `src/db/schema.test.ts`, migration files, `tests/integration/silpo-oauth-postgres.test.ts`, `vitest.config.ts`.
 
@@ -253,7 +253,7 @@ pnpm vitest run tests/integration/silpo-oauth-postgres.test.ts
 
 If a dedicated DB cannot be supplied, record the exact missing gate; do not mark the implementation complete based on the fake alone. No credentials belong in the plan, fixtures, shell output or report.
 
-## Stage 9.4 — Implement the provider and encrypted token handoff
+## Task 4: Stage 9.4 — Implement the provider and encrypted token handoff
 
 **Files:** `provider.ts`, `provider.test.ts`.
 
@@ -281,7 +281,7 @@ await vault.put(userId, {
 - [ ] Add tests for captured redirect only after durable hooks, exact callback origin/path, S256 challenge, issuer mismatch, token type rejection, registration expiry, omitted/rotated refresh token, `tokens()` without issuer context, elapsed expiry, malformed persisted payload and each invalidation scope. A fresh provider instance must complete reconstruction without a shared map.
 - [ ] Run `pnpm vitest run src/features/silpo/oauth/provider.test.ts src/features/silpo/oauth/token-vault.test.ts && pnpm typecheck`.
 
-## Stage 9.5 — Bound transport authentication and cleanup
+## Task 5: Stage 9.5 — Bound transport authentication and cleanup
 
 **Files:** `transport.ts`, `transport.test.ts`.
 
@@ -322,7 +322,7 @@ Define local `ReauthorizationRequired` with a fixed message and map it to `unaut
 - [ ] Test exactly one read replay, no automatic exchange/registration retry, 429 limits only for read-only operations, every close path, and timeout with fake timers. `probeTools` accepts no tool name or arbitrary callback, so it cannot become a cart-write retry path. Document the later bearer-only write boundary in architecture section 9.
 - [ ] Run `pnpm vitest run src/features/silpo/oauth/transport.test.ts src/features/silpo/oauth/provider.test.ts`.
 
-## Stage 9.6 — Add application service and thin routes
+## Task 6: Stage 9.6 — Add application service and thin routes
 
 **Files:** `service.ts`, `.test.ts`, start/callback routes, `tests/integration/silpo-oauth.test.ts`.
 
@@ -380,7 +380,7 @@ pnpm vitest run src/features/silpo/oauth/service.test.ts src/features/silpo/oaut
 pnpm typecheck
 ```
 
-## Stage 9.7 — Review, evidence and single commit
+## Task 7: Stage 9.7 — Review, evidence and single commit
 
 **Files:** Task 9-owned code/docs only. **Produces:** Reviewed, integrated OAuth boundary and evidence report.
 

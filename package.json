@@ -13,6 +13,8 @@
     "db:generate": "drizzle-kit generate"
   },
   "dependencies": {
+    "@ai-sdk/mcp": "^2.0.45",
+    "@modelcontextprotocol/client": "^2.0.0",
     "drizzle-orm": "^0.45.2",
     "next": "^16.3.4",
     "postgres": "^3.4.9",

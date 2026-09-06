@@ -109,7 +109,7 @@ src/
     shared/contracts.ts
     silpo/
       gateway.ts
-      oauth/{provider,token-vault}.ts
+      oauth/{auth-repository,envelope,provider,service,token-vault,transport}.ts
       live/{history,cart-context,cart,catalog,retry}.ts
       demo/demo-gateway.ts
       schemas/{common,history,cart,catalog}.ts
@@ -147,6 +147,18 @@ export interface SilpoGateway {
   readCart(cartId: string): Promise<VerifiedCart>;
 }
 ```
+
+### `SilpoOAuthService` та OAuth-підсистема
+
+Оркеструє потік авторизації «Сільпо» (Authorization Code + PKCE), керує безпечними браузерними сесіями та взаємодією з офіційним MCP SDK:
+- `auth-repository.ts`: типізоване збереження сесій (`auth_sessions`) та OAuth-стану (`silpo_oauth_states`) із PostgreSQL- та in-memory реалізаціями, CAS-переходами фаз (`idle` → `pending` → `processing`) і опортуністичним очищенням прострочених записів;
+- `envelope.ts`: спільний безпечний примітив шифрування AES-256-GCM для збереження чутливих бінарних envelopes;
+- `token-vault.ts`: сховище зашифрованих access/refresh токенів «Сільпо» з AAD на основі `userId`;
+- `provider.ts`: реалізація контракту `OAuthClientProvider` офіційного MCP TypeScript SDK, підключена до сховища стану та токенів;
+- `transport.ts`: клієнтський транспорт Streamable HTTP, єдиний власник оновлення токенів (one-refresh owner), обмеження таймаутів (10 с на запит, 30 с на потік) і перевірка доступності через `tools/list`;
+- `service.ts`: високорівневий сервіс авторизації, що виконує start redirect, атомарний callback claim, ротацію сесійних хендлів та резолвінг сесій (`resolveSilpoSession`).
+
+Сесії та потік мають фіксовані строки дії: pending потік живе щонайбільше 10 хвилин, авторизована сесія — 7 днів (абсолютний строк, non-sliding). Успішний вхід ротує сесію та скеровує на кореневий маршрут застосунку (`/`). Деталі — у [специфікації Silpo OAuth](./superpowers/specs/2026-09-06-silpo-oauth-design.md).
 
 ### `PurchaseNormalizer`
 
@@ -195,16 +207,28 @@ HTTP input проходить Zod-валідацію. Session ownership пере
 
 ```text
 Browser → /api/auth/silpo/start
-  → persist state + PKCE verifier
-  → Silpo authorization
+  → resolve/create user + pending session (cookie: silpo_session, handle hash)
+  → persist encrypted OAuth state (PKCE verifier, state, flow ID, 10 min lifetime)
+  → 303 Redirect to Silpo authorization endpoint (або tools/list probe + ротація, якщо вже авторизовано)
+  → Browser confirms Silpo authorization
   → /api/auth/silpo/callback
-  → validate state
-  → transport.finishAuth(code)
-  → encrypt tokens
-  → secure session cookie
+  → parse query & match unexpired user pending flow
+  → atomic CAS claim: pending → processing (binding hash & version match)
+  → transport.finishAuth(code, iss)
+  → encrypt & save tokens in vault (AES-256-GCM)
+  → connection probe via tools/list
+  → atomic session rotation: revoke old session, issue authenticated session (7 days lifetime)
+  → clear pending flow secrets
+  → 303 Redirect to fixed application landing (/) with rotated cookie
 ```
 
-Cookie має бути `HttpOnly`, `SameSite=Lax`, bounded lifetime і `Secure` у production. За `401` дозволена одна refresh-спроба; потім потрібна reauthorization.
+Правила сесій та автентифікації:
+- Браузер отримує лише непрозорий криптографічний хендл (32 байти base64url) у cookie `silpo_session` (`HttpOnly`, `SameSite=Lax`, `Path=/`, host-only, `Secure` у production). У базі зберігається виключно SHA-256 дайджест (`handle_hash`). Клієнтський `userId` ніколи не приймається з тіла, заголовків чи query.
+- Строк дії pending flow та pending cookie — не більше 10 хвилин (600 с). Строк дії авторизованої сесії — 7 днів (604 800 с, абсолютний, non-sliding).
+- Фіксований landing після успішного входу — кореневий маршрут застосунку (`/`). Авторизація не генерує чернетку автоматично й не позначає демо-дані як live (це зона відповідальності Tasks 13–14).
+- Єдиний власник оновлення токенів (one-refresh owner) — транспорт `transport.ts`: дозволена максимум одна спроба оновлення токенів на логічну операцію читання. Операції запису кошика (Task 16) використовують окремий bearer-only транспорт без авто-оновлення.
+- Атомарний claim колбеку (`pending` → `processing`) через compare-and-swap (CAS) з перевіркою версії, binding hash і строку дії усуває гонки й гарантує одноразовість колбеку (replay protection). При паралельному запиті або повторі другий запит отримує `unauthorized` без виклику мережевого обміну коду.
+- Повний опис протоколу, валідації та життєвого циклу — у [специфікації Silpo OAuth](./superpowers/specs/2026-09-06-silpo-oauth-design.md).
 
 ### 7.2. Cart context
 
@@ -258,6 +282,8 @@ customer + cart context
 
 - `users`: внутрішній ID і мінімальні settings;
 - `mcp_connections`: окремі AES-256-GCM ciphertext, IV і auth tag, expiry, scope та OAuth metadata; legacy ciphertext зберігається до окремої безпечної міграції, а partial unique index дозволяє лише один new-format envelope на користувача;
+- `auth_sessions`: внутрішній session ID, `user_id` (FK → `users`, delete cascade), unique SHA-256 `handle_hash`, `status` (`pending`, `authenticated`, `revoked`), `expires_at` (до 10 хв для pending, 7 днів для authenticated), `created_at`; індекси по `user_id` та `expires_at`;
+- `silpo_oauth_states`: unique `user_id` (FK → `users`, delete cascade), `version` positive integer, `phase` (`idle`, `pending`, `processing`), nullable `binding_hash`, nullable `flow_expires_at` (до 10 хв від старту), окремі AES-256-GCM `ciphertext`, `iv`, `auth_tag` для збереження зашифрованих pending flow ID, state, PKCE verifier, client registration та discovery binding, `updated_at`;
 - `purchase_receipts`: channel, timestamp, city, totals, external fingerprint;
 - `purchase_items`: receipt, external product ID, category, quantity, unit price;
 - `product_snapshots`: product/external ID, branch, price, stock, attributes, `captured_at`;
@@ -277,6 +303,10 @@ customer + cart context
 - JSONB використовується лише для sanitized features, result і trace metadata.
 - Raw MCP response не зберігається без окремої доведеної потреби.
 - Demo snapshot не містить реальних tokens, names, phones, addresses, loyalty identifiers або order IDs.
+- Атомарні CAS-переходи у `silpo_oauth_states` (`version` compare-and-swap) усувають race conditions та забезпечують одноразовість обробки callback у конкурентному середовищі.
+- AAD-сегрегація шифрування: токени у `mcp_connections` шифруються з AAD `<userId>`, а auth state у `silpo_oauth_states` — з AAD `silpo-oauth-state:v1:<userId>`, унеможливлюючи перенесення шифротексту між таблицями чи користувачами.
+- Опортуністичне очищення прострочених записів сесій користувача під час старту нового потоку.
+- Деталі схеми та контрактів збереження — у [специфікації Silpo OAuth](./superpowers/specs/2026-09-06-silpo-oauth-design.md#o9-02--durable-persistence-and-encryption).
 
 ## 9. Помилки та retry policy
 
@@ -294,17 +324,31 @@ customer + cart context
 
 Read-only MCP calls після `429` повторюються не більше трьох разів. Використовується server retry metadata або 250/500/1000 ms + jitter. Cart writes автоматично не повторюються.
 
+Політика повторів та оновлення авторизації:
+- Єдиний власник оновлення токенів (`transport.ts`): рівно одна спроба оновлення токена на логічну операцію читання. Якщо оновлення зазнало невдачі або повернуло повторний 401, облікові дані інвалідуються, а потік завершується помилкою `unauthorized`, що вимагає повторного входу.
+- Обмін коду авторизації (`finishAuth`), динамічна реєстрація клієнта та запити оновлення токенів не є idempotent read-only операціями і ніколи не повторюються автоматично.
+- Bounded network deadlines: таймаут окремого мережевого виклику авторизації становить 10 с, загальний дедлайн мережевої фази start/callback — 30 с.
+- Операції запису кошика (Task 16) використовують окремий bearer-only транспорт без авто-відновлення чи refresh/retry: 401 на записі негайно повертає контроль без повторного оновлення токенів чи повторного виклику мутації.
+- Усі помилки мапляться в стандартизовані безпечні повідомлення без витоку URL, query, заголовків чи стек-трейсів згідно з [специфікацією Silpo OAuth](./superpowers/specs/2026-09-06-silpo-oauth-design.md#o9-06--one-refresh-owner-and-readwrite-separation).
+
 ## 10. Безпека та приватність
 
 - `GOOGLE_GENERATIVE_AI_API_KEY`, DB credentials і MCP tokens є server-only.
 - `TOKEN_ENCRYPTION_KEY` декодується в рівно 32 bytes.
-- OAuth tokens шифруються AES-256-GCM з випадковим 12-byte IV та authenticated tag.
+- OAuth tokens та OAuth state шифруються AES-256-GCM з випадковим 12-byte IV та authenticated tag через спільний примітив `envelope.ts`.
+- AAD-сегрегація: токени шифруються з AAD `<userId>`, а auth state — з AAD `silpo-oauth-state:v1:<userId>`, що унеможливлює трансплантацію шифротексту між таблицями чи користувачами.
+- Сесійні хендли формуються з 32 випадкових криптографічних байтів (base64url); у базі зберігається лише їхній SHA-256 хеш (`handle_hash`). Cookie `silpo_session` має атрибути `HttpOnly`, `SameSite=Lax`, `Path=/`, host-only, `Secure` у production.
+- Строк дії pending-хендлів — до 10 хвилин; авторизованих сесій — 7 днів (абсолютний, non-sliding). Успішний callback атомарно ротує сесійний хендл та відкликає старий.
+- Атомарний claim колбеку через CAS (`pending` → `processing`) запобігає race conditions та атакам повторного відтворення (replay).
+- Чутливі параметри OAuth (PKCE verifier, client secret) шифруються в стані й безповоротно стираються після завершення чи скасування потоку; authorization code ніколи не зберігається в базі даних.
+- Відповіді авторизаційних маршрутів завжди повертають `Cache-Control: no-store` та `Referrer-Policy: no-referrer`.
 - Authorization headers, tokens, phone, email, address, barcode, profile IDs, raw prompts і raw MCP payloads редагуються до persistence та console output.
 - Client отримує лише мінімальні serialized domain objects.
 - Cart write неможливий без server-side approval record.
 - Checkout неможливий для blocked result.
 - Live smoke за замовчуванням read-only; write smoke запускається лише після свіжого ручного підтвердження.
 - `SILPO_MCP.md` є read-only integration contract, якщо користувач окремо не попросив його змінити.
+- Повний перелік гарантій безпеки наведено в [специфікації Silpo OAuth](./superpowers/specs/2026-09-06-silpo-oauth-design.md).
 
 ## 11. Observability
 
@@ -356,6 +400,7 @@ Zod fixtures покривають tools list, missing cart, expired slot, zero s
 ### Integration
 
 - OAuth state/PKCE/token persistence;
+- реальна перевірка конкурентності та життєвого циклу в PostgreSQL (`tests/integration/silpo-oauth-postgres.test.ts`): валідація атомарного CAS claim колбеку (single-winner гарантія проти replay), ротації та відкликання сесій, каскадного видалення та ізоляції користувачів у реальній БД під паралельним навантаженням (запускається окремо через `pnpm vitest run tests/integration/silpo-oauth-postgres.test.ts` згідно з [матрицею прийняття](./superpowers/specs/2026-09-06-silpo-oauth-design.md#7-acceptance-matrix));
 - draft orchestration order;
 - approval ownership/version/idempotency;
 - cart commit/readback;
