@@ -236,8 +236,11 @@ export const DraftItemSchema = z.object({
   productId: nonEmptyString,
   externalProductId: z.number().int().nonnegative(),
   name: nonEmptyString,
+  imageUrl: z.string().url().nullable(),
+  displayRatio: finitePositive,
   quantity: finitePositive,
   price: finiteNonNegative,
+  specialPrice: finiteNonNegative.nullable(),
   stock: finiteNonNegative,
   step: finitePositive,
   confidence: z.number().finite().min(0.55).max(1),
@@ -245,6 +248,7 @@ export const DraftItemSchema = z.object({
   reasonCodes: z.array(nonEmptyString).min(1).refine(unique, "reasonCodes must be unique"),
   reason: z.string().trim().min(1).max(160),
   nutritionStatus: NutritionStatusSchema,
+  promotions: z.array(PromotionSchema),
   alternatives: z.array(ProductCandidateSchema),
 }).strict().superRefine((value, context) => {
   if (value.quantity > value.stock) {
@@ -257,8 +261,18 @@ export const DraftItemSchema = z.object({
   if (value.confidenceBand !== correctBand) {
     context.addIssue({ code: "custom", path: ["confidenceBand"], message: "confidenceBand must match confidence" });
   }
+  if (value.specialPrice !== null && value.specialPrice > value.price) {
+    context.addIssue({ code: "custom", path: ["specialPrice"], message: "specialPrice cannot exceed price" });
+  }
+  if (!unique(value.promotions.map((promotion) => promotion.id))) {
+    context.addIssue({ code: "custom", path: ["promotions"], message: "promotion IDs must be unique" });
+  }
 });
 export type DraftItem = z.infer<typeof DraftItemSchema>;
+
+export function effectiveUnitPrice(item: DraftItem): number {
+  return item.specialPrice ?? item.price;
+}
 
 export const DraftSchema = z.object({
   id: nonEmptyString,
@@ -275,7 +289,10 @@ export const DraftSchema = z.object({
   if (!unique(ids)) {
     context.addIssue({ code: "custom", path: ["items"], message: "draft product IDs must be unique" });
   }
-  const calculated = value.items.reduce((sum, item) => sum + item.quantity * item.price, 0);
+  const calculated = value.items.reduce(
+    (sum, item) => sum + item.quantity * effectiveUnitPrice(item),
+    0,
+  );
   if (Math.abs(calculated - value.total) > 0.01) {
     context.addIssue({ code: "custom", path: ["total"], message: "total must match item snapshots" });
   }

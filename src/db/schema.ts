@@ -9,6 +9,7 @@ import {
   uuid,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
+import type { Promotion } from "@/features/shared/contracts";
 
 // 1. users
 export const users = pgTable("users", {
@@ -129,8 +130,11 @@ export const draftItems = pgTable("draft_items", {
   productId: text("product_id"),
   externalProductId: integer("external_product_id"),
   name: text("name"),
+  imageUrl: text("image_url"),
+  displayRatio: doublePrecision("display_ratio"),
   quantity: doublePrecision("quantity"),
   price: doublePrecision("price"),
+  specialPrice: doublePrecision("special_price"),
   stock: doublePrecision("stock"),
   step: doublePrecision("step"),
   reason: text("reason"),
@@ -142,6 +146,7 @@ export const draftItems = pgTable("draft_items", {
   version: integer("version"),
   position: integer("position"),
   alternatives: jsonb("alternatives").$type<unknown[]>(),
+  promotions: jsonb("promotions").$type<Promotion[]>(),
 });
 
 // 10. cart_commits

@@ -15,6 +15,13 @@
       "when": 1788513462748,
       "tag": "0001_flat_arclight",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1788523933137,
+      "tag": "0002_draft_item_presentation",
+      "breakpoints": true
     }
   ]
 }

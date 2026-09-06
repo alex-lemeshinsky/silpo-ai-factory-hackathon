@@ -1,7 +1,7 @@
 import { getTableColumns } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 
-import { mcpConnections } from "./schema";
+import { draftItems, mcpConnections } from "./schema";
 
 describe("mcpConnections schema", () => {
   it("stores AES-GCM ciphertext, IV, and authentication tag separately", () => {
@@ -14,5 +14,16 @@ describe("mcpConnections schema", () => {
     expect(columns.tokenCiphertext.notNull).toBe(false);
     expect(columns.tokenIv.notNull).toBe(false);
     expect(columns.tokenAuthTag.notNull).toBe(false);
+  });
+});
+
+describe("draftItems schema", () => {
+  it("A7-02 stores product presentation fields", () => {
+    const columns = getTableColumns(draftItems);
+
+    expect(columns.imageUrl.name).toBe("image_url");
+    expect(columns.displayRatio.name).toBe("display_ratio");
+    expect(columns.specialPrice.name).toBe("special_price");
+    expect(columns.promotions.name).toBe("promotions");
   });
 });
