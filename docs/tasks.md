@@ -617,6 +617,8 @@ git commit -m "feat: encrypt Silpo OAuth tokens"
 
 ### Task 9: Silpo OAuth start and callback
 
+**Planning:** [Specification](./superpowers/specs/2026-09-06-silpo-oauth-design.md) · [Implementation plan](./superpowers/plans/2026-09-06-silpo-oauth.md). Proposed storage/file-ownership expansion requires controller or user approval before implementation; the file list below remains the current approved scope.
+
 **Files:**
 - Create: `src/features/silpo/oauth/provider.ts`
 - Create: `src/app/api/auth/silpo/start/route.ts`
