@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import postgres from "postgres";
 
@@ -9,11 +9,13 @@ import { createPostgresAuthRepository } from "@/features/silpo/oauth/auth-reposi
 import { drizzle } from "drizzle-orm/postgres-js";
 import * as schema from "@/db/schema";
 
-const MIGRATIONS = [
-  "0000_opposite_imperial_guard.sql",
-  "0001_flat_arclight.sql",
-  "0002_silpo_oauth.sql",
-];
+const DRIZZLE_DIR = join(process.cwd(), "drizzle");
+
+// Apply every migration in lexical order so a renamed or added file cannot
+// silently drop the tables under test.
+const MIGRATIONS = readdirSync(DRIZZLE_DIR)
+  .filter((file) => file.endsWith(".sql"))
+  .sort();
 
 describe("Silpo OAuth Postgres Integration", () => {
   let sqlA: postgres.Sql;
@@ -22,6 +24,15 @@ describe("Silpo OAuth Postgres Integration", () => {
   let dbA: ReturnType<typeof drizzle<typeof schema>>;
   let dbB: ReturnType<typeof drizzle<typeof schema>>;
   const encryptionKey = randomBytes(32);
+
+  it("applies the migration that creates the OAuth tables", () => {
+    const oauthMigrations = MIGRATIONS.filter((file) => {
+      const sql = readFileSync(join(DRIZZLE_DIR, file), "utf8");
+      return sql.includes('CREATE TABLE "auth_sessions"');
+    });
+    expect(oauthMigrations).toHaveLength(1);
+  });
+
 
   beforeAll(async () => {
     if (!process.env.DATABASE_URL) {
@@ -34,18 +45,21 @@ describe("Silpo OAuth Postgres Integration", () => {
 
     testSchema = `test_oauth_${randomBytes(8).toString("hex")}`;
 
-    sqlA = postgres(dbUrl, { max: 3 });
-    sqlB = postgres(dbUrl, { max: 3 });
+    // Create the test schema with a throwaway connection, then pin search_path
+    // on every pooled connection so no statement can leak into "public".
+    const admin = postgres(dbUrl, { max: 1 });
+    try {
+      await admin.unsafe(`CREATE SCHEMA "${testSchema}"`);
+    } finally {
+      await admin.end();
+    }
 
-    // Create test schema
-    await sqlA.unsafe(`CREATE SCHEMA "${testSchema}"`);
-    await sqlA.unsafe(`SET search_path = "${testSchema}"`);
-    await sqlB.unsafe(`SET search_path = "${testSchema}"`);
+    sqlA = postgres(dbUrl, { max: 3, connection: { search_path: testSchema } });
+    sqlB = postgres(dbUrl, { max: 3, connection: { search_path: testSchema } });
 
     // Read and apply migrations into testSchema
-    const drizzleDir = join(process.cwd(), "drizzle");
     for (const file of MIGRATIONS) {
-      const rawSql = readFileSync(join(drizzleDir, file), "utf8");
+      const rawSql = readFileSync(join(DRIZZLE_DIR, file), "utf8");
       // Rewrite any "public". references to testSchema so nothing escapes
       const scopedSql = rawSql.replaceAll('"public".', `"${testSchema}".`);
       if (scopedSql.includes('"public".')) {
@@ -114,6 +128,72 @@ describe("Silpo OAuth Postgres Integration", () => {
     const winners = [resA, resB].filter(Boolean);
     expect(winners).toHaveLength(1);
     expect(winners[0]?.phase).toBe("processing");
+  });
+
+  it("serializes concurrent flow starts for one user instead of interleaving state and binding", async () => {
+    const repoA = createPostgresAuthRepository({ db: dbA, encryptionKey });
+    const repoB = createPostgresAuthRepository({ db: dbB, encryptionKey });
+
+    const now = new Date("2026-09-06T10:00:00Z");
+    const expiresAt = new Date(now.getTime() + 600000);
+
+    const sessionA = await repoA.createPendingSession({
+      handleHash: randomBytes(32).toString("hex"),
+      now,
+      expiresAt,
+    });
+    const sessionB = await repoA.createPendingSession({
+      handleHash: randomBytes(32).toString("hex"),
+      now,
+      expiresAt,
+      userId: sessionA.userId,
+    });
+
+    const settled = await Promise.allSettled([
+      repoA.beginFlow({
+        userId: sessionA.userId,
+        bindingHash: sessionA.handleHash,
+        flowId: "flow-pg-concurrent-a",
+        state: "state-pg-concurrent-a",
+        now,
+        expiresAt,
+      }),
+      repoB.beginFlow({
+        userId: sessionB.userId,
+        bindingHash: sessionB.handleHash,
+        flowId: "flow-pg-concurrent-b",
+        state: "state-pg-concurrent-b",
+        now,
+        expiresAt,
+      }),
+    ]);
+
+    const flows = settled.flatMap((r) => (r.status === "fulfilled" ? [r.value] : []));
+    expect(flows.length).toBeGreaterThanOrEqual(1);
+
+    // The persisted flow secret and browser binding must come from one start.
+    const stored = await repoA.readState(sessionA.userId);
+    expect(stored).not.toBeNull();
+    const bindingForState: Record<string, string> = {
+      "state-pg-concurrent-a": sessionA.handleHash,
+      "state-pg-concurrent-b": sessionB.handleHash,
+    };
+    expect(stored!.bindingHash).toBe(bindingForState[stored!.payload.state!]);
+
+    const winners = flows.filter((f) => f.payload.state === stored!.payload.state);
+    expect(winners).toHaveLength(1);
+    expect(winners[0].version).toBe(stored!.version);
+
+    // A losing start must not be able to write its verifier over the winner.
+    for (const loser of flows.filter((f) => f.payload.state !== stored!.payload.state)) {
+      await expect(
+        repoA.saveState({
+          userId: sessionA.userId,
+          expectedVersion: loser.version,
+          payload: { ...loser.payload, verifier: "loser-verifier" },
+        }),
+      ).rejects.toThrow();
+    }
   });
 
   it("cascades user deletion to auth_sessions and silpo_oauth_states", async () => {
@@ -260,5 +340,151 @@ describe("Silpo OAuth Postgres Integration", () => {
       now,
     });
     expect(replayClaim).toBeNull();
+  });
+
+  it("rotates the handle and revokes the pending and previously authenticated sessions on activation", async () => {
+    const repo = createPostgresAuthRepository({ db: dbA, encryptionKey });
+    const now = new Date("2026-09-06T10:00:00Z");
+    const authExpiresAt = new Date(now.getTime() + 604800000);
+
+    const pendingHash = randomBytes(32).toString("hex");
+    const authenticatedHash = randomBytes(32).toString("hex");
+
+    const session = await repo.createPendingSession({
+      handleHash: pendingHash,
+      now,
+      expiresAt: new Date(now.getTime() + 600000),
+    });
+
+    const flow = await repo.beginFlow({
+      userId: session.userId,
+      bindingHash: pendingHash,
+      flowId: "flow-pg-rotate-1",
+      state: "state-pg-rotate-1",
+      now,
+      expiresAt: new Date(now.getTime() + 600000),
+    });
+
+    const claimed = await repo.claimFlow({
+      userId: session.userId,
+      bindingHash: pendingHash,
+      expectedVersion: flow.version,
+      now,
+    });
+    expect(claimed).not.toBeNull();
+
+    const activated = await repo.activateSession({
+      oldHandleHash: pendingHash,
+      newHandleHash: authenticatedHash,
+      userId: session.userId,
+      expectedFlowVersion: claimed!.version,
+      now,
+      expiresAt: authExpiresAt,
+    });
+
+    expect(activated.status).toBe("authenticated");
+    expect(activated.userId).toBe(session.userId);
+    expect(await repo.findSession(pendingHash, now)).toBeNull();
+    expect((await repo.findSession(authenticatedHash, now))?.status).toBe("authenticated");
+
+    // Flow secrets are cleared and the flow returns to idle.
+    const afterState = await repo.readState(session.userId);
+    expect(afterState?.phase).toBe("idle");
+    expect(afterState?.bindingHash).toBeNull();
+    expect(afterState?.payload.state).toBeNull();
+    expect(afterState?.payload.verifier).toBeNull();
+
+    // Reauthorization from the authenticated session must invalidate the old handle.
+    const reauthPendingHash = randomBytes(32).toString("hex");
+    const rotatedHash = randomBytes(32).toString("hex");
+
+    const reauthSession = await repo.createPendingSession({
+      handleHash: reauthPendingHash,
+      now,
+      expiresAt: new Date(now.getTime() + 600000),
+      userId: session.userId,
+    });
+    expect(reauthSession.userId).toBe(session.userId);
+
+    const reauthFlow = await repo.beginFlow({
+      userId: session.userId,
+      bindingHash: reauthPendingHash,
+      flowId: "flow-pg-rotate-2",
+      state: "state-pg-rotate-2",
+      now,
+      expiresAt: new Date(now.getTime() + 600000),
+    });
+
+    const reauthClaimed = await repo.claimFlow({
+      userId: session.userId,
+      bindingHash: reauthPendingHash,
+      expectedVersion: reauthFlow.version,
+      now,
+    });
+    expect(reauthClaimed).not.toBeNull();
+
+    await repo.activateSession({
+      oldHandleHash: reauthPendingHash,
+      newHandleHash: rotatedHash,
+      userId: session.userId,
+      expectedFlowVersion: reauthClaimed!.version,
+      now,
+      expiresAt: authExpiresAt,
+    });
+
+    expect(await repo.findSession(reauthPendingHash, now)).toBeNull();
+    expect(await repo.findSession(authenticatedHash, now)).toBeNull();
+    expect((await repo.findSession(rotatedHash, now))?.status).toBe("authenticated");
+  });
+
+  it("rejects rows that violate the documented lifecycle invariants", async () => {
+    const repo = createPostgresAuthRepository({ db: dbA, encryptionKey });
+    const now = new Date("2026-09-06T10:00:00Z");
+    const handleHash = randomBytes(32).toString("hex");
+
+    const session = await repo.createPendingSession({
+      handleHash,
+      now,
+      expiresAt: new Date(now.getTime() + 600000),
+    });
+
+    await expect(
+      sqlA.unsafe(
+        `UPDATE "${testSchema}"."auth_sessions" SET status = 'bogus' WHERE user_id = '${session.userId}'`,
+      ),
+    ).rejects.toThrow();
+
+    await repo.beginFlow({
+      userId: session.userId,
+      bindingHash: handleHash,
+      flowId: "flow-pg-checks",
+      state: "state-pg-checks",
+      now,
+      expiresAt: new Date(now.getTime() + 600000),
+    });
+
+    await expect(
+      sqlA.unsafe(
+        `UPDATE "${testSchema}"."silpo_oauth_states" SET phase = 'bogus' WHERE user_id = '${session.userId}'`,
+      ),
+    ).rejects.toThrow();
+
+    await expect(
+      sqlA.unsafe(
+        `UPDATE "${testSchema}"."silpo_oauth_states" SET version = 0 WHERE user_id = '${session.userId}'`,
+      ),
+    ).rejects.toThrow();
+
+    await expect(
+      sqlA.unsafe(
+        `UPDATE "${testSchema}"."silpo_oauth_states" SET binding_hash = NULL WHERE user_id = '${session.userId}'`,
+      ),
+    ).rejects.toThrow();
+
+    await expect(
+      sqlA.unsafe(
+        `UPDATE "${testSchema}"."silpo_oauth_states" SET flow_expires_at = NULL WHERE user_id = '${session.userId}'`,
+      ),
+    ).rejects.toThrow();
   });
 });

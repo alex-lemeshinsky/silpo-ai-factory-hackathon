@@ -1,4 +1,6 @@
 import { randomBytes } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, expectTypeOf, it } from "vitest";
 
 import { createInMemoryAuthRepository } from "./auth-repository";
@@ -10,11 +12,12 @@ import {
   type OAuthConnectionFactory,
   ReauthorizationRequired,
   sanitizeAuthorizationHeader,
+  SILPO_MCP_SERVER_URL,
 } from "./transport";
 
 const SAMPLE_BASE_URL = "https://app.silpo-test.ua";
 const SAMPLE_ISSUER = "https://auth.silpo.ua";
-const SAMPLE_SERVER_URL = "https://api.silpo.ua/mcp";
+const SAMPLE_SERVER_URL = "https://mcp.silpo.ua/mcp";
 
 interface MockNetworkOptions {
   onTokenRequest?: (grantType: string, body: URLSearchParams) => Response | Promise<Response>;
@@ -218,6 +221,30 @@ describe("Silpo OAuth Transport", () => {
     expectTypeOf<OAuthConnectionFactory>().toBeFunction();
   });
 
+  it("uses the endpoint documented in SILPO_MCP.md as its default server URL", async () => {
+    const doc = readFileSync(join(process.cwd(), "SILPO_MCP.md"), "utf8");
+    const documented = doc.match(/\|\s*Endpoint\s*\|\s*`([^`]+)`\s*\|/)?.[1];
+    expect(documented).toBe(SILPO_MCP_SERVER_URL);
+
+    const { provider } = await createTestHarness();
+    const { fakeFetch, requests, safeLookupIp } = createSyntheticFetch();
+
+    // No serverUrl override: the connection must target the documented endpoint.
+    const connection = createSilpoOAuthConnection(provider, {
+      fetch: fakeFetch,
+      lookupIp: safeLookupIp,
+    });
+
+    try {
+      await connection.begin();
+    } finally {
+      await connection.close();
+    }
+
+    expect(requests.length).toBeGreaterThan(0);
+    expect(new URL(requests[0].url).origin).toBe(new URL(SILPO_MCP_SERVER_URL).origin);
+  });
+
   it("exports ReauthorizationRequired error", () => {
     const err = new ReauthorizationRequired();
     expect(err).toBeInstanceOf(Error);
@@ -244,7 +271,7 @@ describe("Silpo OAuth Transport", () => {
           status: 401,
           headers: {
             "Content-Type": "application/json",
-            "WWW-Authenticate": 'Bearer error="invalid_token", resource_metadata="https://api.silpo.ua/.well-known/oauth-protected-resource"',
+            "WWW-Authenticate": 'Bearer error="invalid_token", resource_metadata="https://mcp.silpo.ua/.well-known/oauth-protected-resource"',
           },
         });
       },
@@ -295,7 +322,7 @@ describe("Silpo OAuth Transport", () => {
             status: 401,
             headers: {
               "Content-Type": "application/json",
-              "WWW-Authenticate": 'Bearer error="invalid_token", resource_metadata="https://api.silpo.ua/.well-known/oauth-protected-resource"',
+              "WWW-Authenticate": 'Bearer error="invalid_token", resource_metadata="https://mcp.silpo.ua/.well-known/oauth-protected-resource"',
             },
           });
         }
@@ -485,7 +512,7 @@ describe("Silpo OAuth Transport", () => {
     // Insecure http protocol
     expect(() =>
       createSilpoOAuthConnection(provider, {
-        serverUrl: "http://api.silpo.ua/mcp",
+        serverUrl: "http://mcp.silpo.ua/mcp",
       }),
     ).toThrow();
 
@@ -541,6 +568,151 @@ describe("Silpo OAuth Transport", () => {
     });
 
     await expect(connection.begin()).rejects.toThrow();
+  });
+
+  it("O9-07 strips credentials when a redirect changes origin", async () => {
+    const { provider, vault, session, now } = await createTestHarness();
+
+    await vault.put(session.userId, {
+      accessToken: "valid-token",
+      refreshToken: "valid-refresh",
+      clientSecret: "client-secret",
+      expiresAt: new Date(now.getTime() + 3600000),
+      scope: "cart:read",
+      oauthMetadata: null,
+    });
+
+    const foreign: { auth: string | null; cookie: string | null; method: string }[] = [];
+    const { fakeFetch, safeLookupIp } = createSyntheticFetch({
+      onMcpRequest: (_req, attempt) =>
+        attempt === 1
+          ? new Response(null, {
+              status: 302,
+              headers: { Location: "https://relay.example/mcp" },
+            })
+          : undefined,
+    });
+
+    const wrappedFetch: typeof fetch = async (input, init) => {
+      const url = new URL(typeof input === "string" ? input : input.toString());
+      if (url.origin === "https://relay.example") {
+        const headers = new Headers(init?.headers);
+        foreign.push({
+          auth: headers.get("Authorization"),
+          cookie: headers.get("Cookie"),
+          method: (init?.method ?? "GET").toUpperCase(),
+        });
+        return new Response("{}", {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return fakeFetch(input, init);
+    };
+
+    const connection = createSilpoOAuthConnection(provider, {
+      serverUrl: SAMPLE_SERVER_URL,
+      fetch: wrappedFetch,
+      lookupIp: safeLookupIp,
+    });
+
+    await connection.probeTools().catch(() => {});
+    await connection.close();
+
+    expect(foreign.length).toBeGreaterThan(0);
+    for (const request of foreign) {
+      expect(request.auth).toBeNull();
+      expect(request.cookie).toBeNull();
+      // A POST downgraded to GET carries no body to the new origin either.
+      expect(request.method).toBe("GET");
+    }
+  });
+
+  it("O9-07 refuses to replay a request body to a different origin", async () => {
+    const { provider } = await createTestHarness();
+
+    const foreign: string[] = [];
+    const { fakeFetch, safeLookupIp } = createSyntheticFetch();
+
+    const wrappedFetch: typeof fetch = async (input, init) => {
+      const url = new URL(typeof input === "string" ? input : input.toString());
+      if (url.origin === "https://relay.example") {
+        foreign.push(url.toString());
+        return new Response(
+          JSON.stringify({ client_id: "relayed-client", client_secret: "relayed-secret" }),
+          { status: 201, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      if (url.pathname === "/register") {
+        return new Response(null, {
+          status: 307,
+          headers: { Location: "https://relay.example/register" },
+        });
+      }
+      return fakeFetch(input, init);
+    };
+
+    const connection = createSilpoOAuthConnection(provider, {
+      serverUrl: SAMPLE_SERVER_URL,
+      fetch: wrappedFetch,
+      lookupIp: safeLookupIp,
+    });
+
+    await expect(connection.begin()).rejects.toThrow(/invalid_external_cross_origin_redirect/);
+    await connection.close();
+
+    // The client registration body never reached the redirect target, and no
+    // client credential was accepted from it.
+    expect(foreign).toEqual([]);
+    expect(provider.clientInformation({ issuer: SAMPLE_ISSUER })).toBeUndefined();
+  });
+
+  it("O9-06 refuses a Retry-After wait that does not fit the operation deadline", async () => {
+    const { provider, vault, session, now } = await createTestHarness();
+
+    await vault.put(session.userId, {
+      accessToken: "valid-token",
+      refreshToken: "valid-refresh",
+      clientSecret: "client-secret",
+      expiresAt: new Date(now.getTime() + 3600000),
+      scope: "cart:read",
+      oauthMetadata: null,
+    });
+
+    let toolListAttempts = 0;
+    const { fakeFetch, safeLookupIp } = createSyntheticFetch({
+      onMcpRequest: async (req) => {
+        const cloned = req.clone();
+        let bodyJson: Record<string, unknown> = {};
+        try {
+          bodyJson = (await cloned.json()) as Record<string, unknown>;
+        } catch {
+          // GET stream
+        }
+        if (bodyJson.method === "tools/list") {
+          toolListAttempts += 1;
+          return new Response(JSON.stringify({ error: "rate_limited" }), {
+            status: 429,
+            headers: { "Retry-After": "3600" },
+          });
+        }
+        return undefined;
+      },
+    });
+
+    const connection = createSilpoOAuthConnection(provider, {
+      serverUrl: SAMPLE_SERVER_URL,
+      fetch: fakeFetch,
+      lookupIp: safeLookupIp,
+      operationTimeoutMs: 500,
+    });
+
+    const startedAt = Date.now();
+    await expect(connection.probeTools()).rejects.toThrow();
+    await connection.close();
+
+    expect(toolListAttempts).toBe(1);
+    expect(Date.now() - startedAt).toBeLessThan(2000);
   });
 
   it("retries read-only 429 responses up to three times with retry metadata", async () => {
@@ -665,7 +837,7 @@ describe("Silpo OAuth Transport", () => {
 
     it("preserves Bearer Authorization on standard MCP endpoint", () => {
       const headers = new Headers({ Authorization: "Bearer valid-mcp-token" });
-      const url = new URL("https://api.silpo.ua/mcp");
+      const url = new URL("https://mcp.silpo.ua/mcp");
       sanitizeAuthorizationHeader(url, headers, false);
       expect(headers.get("Authorization")).toBe("Bearer valid-mcp-token");
     });

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, eq, gt, or, sql } from "drizzle-orm";
+import { and, eq, gt, lte, or, sql } from "drizzle-orm";
 import { z } from "zod";
 
 import type { DbClient } from "@/db/client";
@@ -158,15 +158,81 @@ export const oauthPayloadSchema = z
   })
   .strict();
 
+export const sessionStatusSchema = z.enum(["pending", "authenticated", "revoked"]);
+export const flowPhaseSchema = z.enum(["idle", "pending", "processing"]);
+
 export const authSessionSchema = z
   .object({
     id: z.string().regex(uuidRegex),
     userId: userIdSchema,
     handleHash: hashSchema,
-    status: z.enum(["pending", "authenticated", "revoked"]),
+    status: sessionStatusSchema,
     expiresAt: z.date(),
   })
   .strict();
+
+export const oauthStateRowSchema = z
+  .object({
+    userId: userIdSchema,
+    version: z.number().int().positive(),
+    phase: flowPhaseSchema,
+    bindingHash: hashSchema.nullable(),
+    flowExpiresAt: z.date().nullable(),
+  })
+  .strict()
+  .refine(
+    (row) =>
+      row.phase === "idle" || (row.bindingHash !== null && row.flowExpiresAt !== null),
+    { message: "an active flow requires a binding hash and an expiry" },
+  );
+
+/**
+ * O9-02: every stored row is validated before it becomes a trusted domain type.
+ * Validation failures are reported as an opaque persistence error so no column
+ * value can reach a response or a log.
+ */
+function toAuthSession(row: {
+  id: string;
+  userId: string;
+  handleHash: string;
+  status: string;
+  expiresAt: Date;
+}): AuthSession {
+  const parsed = authSessionSchema.safeParse({
+    id: row.id,
+    userId: row.userId,
+    handleHash: row.handleHash,
+    status: row.status,
+    expiresAt: row.expiresAt,
+  });
+  if (!parsed.success) {
+    throw new Error("invalid_stored_row");
+  }
+  return parsed.data;
+}
+
+function toOAuthState(
+  row: {
+    userId: string;
+    version: number;
+    phase: string;
+    bindingHash: string | null;
+    flowExpiresAt: Date | null;
+  },
+  payload: OAuthPayload,
+): OAuthState {
+  const parsed = oauthStateRowSchema.safeParse({
+    userId: row.userId,
+    version: row.version,
+    phase: row.phase,
+    bindingHash: row.bindingHash,
+    flowExpiresAt: row.flowExpiresAt,
+  });
+  if (!parsed.success) {
+    throw new Error("invalid_stored_row");
+  }
+  return { ...parsed.data, payload };
+}
 
 function getOAuthStateAAD(userId: string): string {
   return `silpo-oauth-state:v1:${userId.toLowerCase()}`;
@@ -468,7 +534,14 @@ export function createInMemoryAuthRepository(options: {
         throw new Error("activation_conflict");
       }
 
-      // Revoke old session
+      // O9-01: revoke every handle this user currently holds, including the
+      // authenticated handle that initiated a reauthorization.
+      for (const handle of userSessions.get(normUserId) ?? new Set<string>()) {
+        const existing = sessions.get(handle);
+        if (existing) {
+          existing.status = "revoked";
+        }
+      }
       oldSession.status = "revoked";
 
       // Create new authenticated session
@@ -564,7 +637,10 @@ export function createPostgresAuthRepository(options: {
           .where(
             and(
               eq(authSessions.userId, userId),
-              or(eq(authSessions.status, "revoked"), sql`${authSessions.expiresAt} <= ${input.now}`),
+              or(
+                eq(authSessions.status, "revoked"),
+                lte(authSessions.expiresAt, input.now),
+              ),
             ),
           );
 
@@ -579,13 +655,7 @@ export function createPostgresAuthRepository(options: {
           })
           .returning();
 
-        return {
-          id: session.id,
-          userId: session.userId,
-          handleHash: session.handleHash,
-          status: session.status as "pending" | "authenticated" | "revoked",
-          expiresAt: session.expiresAt,
-        };
+        return toAuthSession(session);
       });
     },
 
@@ -610,14 +680,7 @@ export function createPostgresAuthRepository(options: {
         .limit(1);
 
       if (rows.length === 0) return null;
-      const row = rows[0];
-      return {
-        id: row.id,
-        userId: row.userId,
-        handleHash: row.handleHash,
-        status: row.status as "pending" | "authenticated" | "revoked",
-        expiresAt: row.expiresAt,
-      };
+      return toAuthSession(rows[0]);
     },
 
     async readState(userId: string): Promise<OAuthState | null> {
@@ -637,14 +700,7 @@ export function createPostgresAuthRepository(options: {
         authTag: row.authTag,
       });
 
-      return {
-        userId: row.userId,
-        version: row.version,
-        phase: row.phase as "idle" | "pending" | "processing",
-        bindingHash: row.bindingHash,
-        flowExpiresAt: row.flowExpiresAt,
-        payload,
-      };
+      return toOAuthState(row, payload);
     },
 
     async beginFlow(input: {
@@ -659,10 +715,13 @@ export function createPostgresAuthRepository(options: {
       const normBinding = hashSchema.parse(input.bindingHash);
 
       return await db.transaction(async (tx) => {
+        // O9-02: lock the row before the read-modify-write so two concurrent
+        // starts cannot both derive the same next version.
         const rows = await tx
           .select()
           .from(silpoOAuthStates)
           .where(eq(silpoOAuthStates.userId, normUserId))
+          .for("update")
           .limit(1);
 
         let registration: ClientRegistration | null = null;
@@ -728,17 +787,20 @@ export function createPostgresAuthRepository(options: {
               authTag: sealed.authTag,
               updatedAt: input.now,
             },
+            // Only replace the exact version this transaction read. A row that
+            // appeared after the locking select belongs to another start.
+            setWhere:
+              rows.length > 0
+                ? eq(silpoOAuthStates.version, rows[0].version)
+                : sql`false`,
           })
           .returning();
 
-        return {
-          userId: upserted.userId,
-          version: upserted.version,
-          phase: upserted.phase as "idle" | "pending" | "processing",
-          bindingHash: upserted.bindingHash,
-          flowExpiresAt: upserted.flowExpiresAt,
-          payload: newPayload,
-        };
+        if (!upserted) {
+          throw new Error("flow_conflict");
+        }
+
+        return toOAuthState(upserted, newPayload);
       });
     },
 
@@ -771,15 +833,7 @@ export function createPostgresAuthRepository(options: {
         throw new Error("version_mismatch");
       }
 
-      const updated = rows[0];
-      return {
-        userId: updated.userId,
-        version: updated.version,
-        phase: updated.phase as "idle" | "pending" | "processing",
-        bindingHash: updated.bindingHash,
-        flowExpiresAt: updated.flowExpiresAt,
-        payload: oauthPayloadSchema.parse(input.payload),
-      };
+      return toOAuthState(rows[0], oauthPayloadSchema.parse(input.payload));
     },
 
     async claimFlow(input: {
@@ -820,14 +874,7 @@ export function createPostgresAuthRepository(options: {
         authTag: row.authTag,
       });
 
-      return {
-        userId: row.userId,
-        version: row.version,
-        phase: row.phase as "idle" | "pending" | "processing",
-        bindingHash: row.bindingHash,
-        flowExpiresAt: row.flowExpiresAt,
-        payload,
-      };
+      return toOAuthState(row, payload);
     },
 
     async finishFlow(input: { userId: string; expectedVersion: number }): Promise<boolean> {
@@ -931,19 +978,17 @@ export function createPostgresAuthRepository(options: {
         }
         const stateRow = stateRows[0];
 
-        // Revoke old session
+        // O9-01: revoke every handle this user currently holds, not only the
+        // flow's own handle. Reauthorization from an authenticated browser runs
+        // through a separate pending handle, and the handle that initiated it
+        // must not survive the rotation.
         const revokedRows = await tx
           .update(authSessions)
           .set({ status: "revoked" })
-          .where(
-            and(
-              eq(authSessions.handleHash, normOldHash),
-              eq(authSessions.userId, normUserId),
-            ),
-          )
-          .returning();
+          .where(eq(authSessions.userId, normUserId))
+          .returning({ handleHash: authSessions.handleHash });
 
-        if (revokedRows.length === 0) {
+        if (!revokedRows.some((row) => row.handleHash === normOldHash)) {
           throw new Error("activation_conflict");
         }
 
@@ -999,13 +1044,7 @@ export function createPostgresAuthRepository(options: {
           })
           .where(eq(silpoOAuthStates.userId, normUserId));
 
-        return {
-          id: newSession.id,
-          userId: newSession.userId,
-          handleHash: newSession.handleHash,
-          status: newSession.status as "pending" | "authenticated" | "revoked",
-          expiresAt: newSession.expiresAt,
-        };
+        return toAuthSession(newSession);
       });
     },
   };

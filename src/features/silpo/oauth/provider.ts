@@ -26,6 +26,7 @@ import {
   createTokenVault,
   type TokenVault,
 } from "./token-vault";
+import { isPrivateOrLoopbackIp, SILPO_MCP_SERVER_URL } from "./transport";
 
 export interface SilpoOAuthProviderOptions {
   vault?: TokenVault;
@@ -59,6 +60,34 @@ export type SilpoOAuthProvider = OfficialOAuthClientProvider & {
     scope: "all" | "client" | "tokens" | "verifier" | "discovery",
   ): Promise<void>;
 };
+
+/**
+ * O9-07: one destination policy for everything the provider persists or hands
+ * to the browser. Returns the original string so issuer comparisons stay exact.
+ */
+function requireExternalHttpsUrl(
+  value: unknown,
+  code = "invalid_external_discovery_metadata",
+): string {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new Error(code);
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new Error(code);
+  }
+
+  const hostname = parsed.hostname.toLowerCase();
+  const isLocalName = hostname === "localhost" || hostname.endsWith(".localhost");
+  if (parsed.protocol !== "https:" || isLocalName || isPrivateOrLoopbackIp(hostname)) {
+    throw new Error(code);
+  }
+
+  return value;
+}
 
 function validatePublicBaseUrl(rawUrl: string): string {
   let parsed: URL;
@@ -183,6 +212,16 @@ export async function createSilpoOAuthProvider(
     },
 
     redirectToAuthorization(authorizationUrl: URL): void {
+      // O9-07: the browser redirect obeys the same destination policy as server
+      // fetches, and may only point at the bound authorization server.
+      const destination = "invalid_external_authorization_destination";
+      requireExternalHttpsUrl(authorizationUrl.toString(), destination);
+
+      const boundEndpoint = state.payload.discovery?.authorizationEndpoint;
+      if (boundEndpoint && new URL(boundEndpoint).origin !== authorizationUrl.origin) {
+        throw new Error(destination);
+      }
+
       capturedAuthUrl = authorizationUrl;
     },
 
@@ -344,29 +383,32 @@ export async function createSilpoOAuthProvider(
     },
 
     async saveDiscoveryState(discoveryState: OAuthDiscoveryState): Promise<void> {
+      // O9-03/O9-07: only discovered metadata is trusted. Incomplete or unsafe
+      // metadata is rejected instead of being replaced with guessed endpoints.
       const asMeta = discoveryState.authorizationServerMetadata;
-      const issuer = asMeta?.issuer ?? discoveryState.authorizationServerUrl;
-      const authorizationEndpoint = asMeta?.authorization_endpoint
-        ? String(asMeta.authorization_endpoint)
-        : `${issuer}/oauth2/auth`;
-      const tokenEndpoint = asMeta?.token_endpoint
-        ? String(asMeta.token_endpoint)
-        : `${issuer}/oauth2/token`;
-      const registrationEndpoint = asMeta?.registration_endpoint
-        ? String(asMeta.registration_endpoint)
-        : null;
+      if (!asMeta) {
+        throw new Error("invalid_external_discovery_metadata");
+      }
+
+      const issuer = requireExternalHttpsUrl(asMeta.issuer);
+      const authorizationEndpoint = requireExternalHttpsUrl(asMeta.authorization_endpoint);
+      const tokenEndpoint = requireExternalHttpsUrl(asMeta.token_endpoint);
+      const registrationEndpoint =
+        asMeta.registration_endpoint === undefined || asMeta.registration_endpoint === null
+          ? null
+          : requireExternalHttpsUrl(asMeta.registration_endpoint);
 
       const binding: DiscoveryBinding = {
         issuer,
         authorizationEndpoint,
         tokenEndpoint,
         registrationEndpoint,
-        resource: discoveryState.resourceMetadata?.resource ?? "https://api.silpo.ua/mcp",
+        resource: discoveryState.resourceMetadata?.resource ?? SILPO_MCP_SERVER_URL,
         resourceMetadataUrl: discoveryState.resourceMetadataUrl ?? null,
-        scopesSupported: asMeta?.scopes_supported ?? [],
-        codeChallengeMethodsSupported: asMeta?.code_challenge_methods_supported ?? [],
-        tokenEndpointAuthMethodsSupported: asMeta?.token_endpoint_auth_methods_supported ?? [],
-        responseIssuerRequired: Boolean(asMeta?.authorization_response_iss_parameter_supported),
+        scopesSupported: asMeta.scopes_supported ?? [],
+        codeChallengeMethodsSupported: asMeta.code_challenge_methods_supported ?? [],
+        tokenEndpointAuthMethodsSupported: asMeta.token_endpoint_auth_methods_supported ?? [],
+        responseIssuerRequired: Boolean(asMeta.authorization_response_iss_parameter_supported),
       };
 
       state.payload.discovery = binding;

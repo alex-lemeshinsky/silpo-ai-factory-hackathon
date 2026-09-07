@@ -325,7 +325,7 @@ describe("SilpoOAuthProvider implementation", () => {
 
     const discovery: OAuthDiscoveryState = {
       authorizationServerUrl: SAMPLE_ISSUER,
-      resourceMetadataUrl: "https://api.silpo.ua/.well-known/oauth-protected-resource",
+      resourceMetadataUrl: "https://mcp.silpo.ua/.well-known/oauth-protected-resource",
       authorizationServerMetadata: {
         issuer: SAMPLE_ISSUER,
         authorization_endpoint: "https://auth.silpo.ua/authorize",
@@ -337,7 +337,7 @@ describe("SilpoOAuthProvider implementation", () => {
         authorization_response_iss_parameter_supported: true,
         response_types_supported: ["code"],
       },
-      resourceMetadata: { resource: "https://api.silpo.ua/mcp" },
+      resourceMetadata: { resource: "https://mcp.silpo.ua/mcp" },
     };
 
     await provider1.saveDiscoveryState?.(discovery);
@@ -357,6 +357,144 @@ describe("SilpoOAuthProvider implementation", () => {
     expect(restored?.authorizationServerMetadata?.token_endpoint).toBe("https://auth.silpo.ua/token");
     expect(restored?.authorizationServerMetadata?.registration_endpoint).toBe("https://auth.silpo.ua/register");
     expect(restored?.authorizationServerMetadata?.authorization_response_iss_parameter_supported).toBe(true);
+  });
+
+  it("O9-03 rejects incomplete or unsafe discovery metadata instead of guessing endpoints", async () => {
+    const { repo, vault } = createHarness();
+    const now = new Date("2026-09-06T10:00:00Z");
+    const session = await repo.createPendingSession({
+      handleHash: "a".repeat(64),
+      now,
+      expiresAt: new Date(now.getTime() + 600000),
+    });
+    await repo.beginFlow({
+      userId: session.userId,
+      bindingHash: session.handleHash,
+      flowId: "flow-1",
+      state: "state-1",
+      now,
+      expiresAt: session.expiresAt,
+    });
+
+    const provider = await createSilpoOAuthProvider(session.userId, {
+      vault,
+      repository: repo,
+      publicBaseUrl: SAMPLE_BASE_URL,
+      now: () => now,
+    });
+
+    const complete = {
+      issuer: SAMPLE_ISSUER,
+      authorization_endpoint: `${SAMPLE_ISSUER}/authorize`,
+      token_endpoint: `${SAMPLE_ISSUER}/token`,
+      response_types_supported: ["code"],
+    };
+
+    const rejected: OAuthDiscoveryState[] = [
+      // No authorization-server metadata at all
+      { authorizationServerUrl: SAMPLE_ISSUER },
+      // Missing authorization endpoint
+      {
+        authorizationServerUrl: SAMPLE_ISSUER,
+        authorizationServerMetadata: { ...complete, authorization_endpoint: undefined },
+      } as unknown as OAuthDiscoveryState,
+      // Missing token endpoint
+      {
+        authorizationServerUrl: SAMPLE_ISSUER,
+        authorizationServerMetadata: { ...complete, token_endpoint: undefined },
+      } as unknown as OAuthDiscoveryState,
+      // Cleartext endpoint
+      {
+        authorizationServerUrl: SAMPLE_ISSUER,
+        authorizationServerMetadata: {
+          ...complete,
+          authorization_endpoint: "http://auth.silpo.ua/authorize",
+        },
+      },
+      // Loopback endpoint
+      {
+        authorizationServerUrl: SAMPLE_ISSUER,
+        authorizationServerMetadata: {
+          ...complete,
+          token_endpoint: "https://127.0.0.1/token",
+        },
+      },
+      // Link-local metadata host
+      {
+        authorizationServerUrl: SAMPLE_ISSUER,
+        authorizationServerMetadata: {
+          ...complete,
+          issuer: "https://169.254.169.254",
+        },
+      },
+    ];
+
+    for (const discovery of rejected) {
+      await expect(provider.saveDiscoveryState?.(discovery)).rejects.toThrow(
+        /invalid_external/,
+      );
+    }
+
+    // Nothing partial was persisted.
+    expect(await provider.discoveryState?.()).toBeUndefined();
+  });
+
+  it("O9-07 refuses to capture an authorization redirect that leaves the bound server or the HTTPS policy", async () => {
+    const { repo, vault } = createHarness();
+    const now = new Date("2026-09-06T10:00:00Z");
+    const session = await repo.createPendingSession({
+      handleHash: "a".repeat(64),
+      now,
+      expiresAt: new Date(now.getTime() + 600000),
+    });
+    await repo.beginFlow({
+      userId: session.userId,
+      bindingHash: session.handleHash,
+      flowId: "flow-1",
+      state: "state-1",
+      now,
+      expiresAt: session.expiresAt,
+    });
+
+    const provider = await createSilpoOAuthProvider(session.userId, {
+      vault,
+      repository: repo,
+      publicBaseUrl: SAMPLE_BASE_URL,
+      now: () => now,
+    });
+
+    // Before any binding exists the destination policy still applies.
+    expect(() => provider.redirectToAuthorization(new URL("http://auth.silpo.ua/authorize"))).toThrow(
+      /invalid_external/,
+    );
+    expect(() => provider.redirectToAuthorization(new URL("https://127.0.0.1/authorize"))).toThrow(
+      /invalid_external/,
+    );
+    expect(() => provider.redirectToAuthorization(new URL("https://localhost/authorize"))).toThrow(
+      /invalid_external/,
+    );
+    expect(provider.authorizationUrl()).toBeNull();
+
+    await provider.saveDiscoveryState?.({
+      authorizationServerUrl: SAMPLE_ISSUER,
+      authorizationServerMetadata: {
+        issuer: SAMPLE_ISSUER,
+        authorization_endpoint: `${SAMPLE_ISSUER}/authorize`,
+        token_endpoint: `${SAMPLE_ISSUER}/token`,
+        response_types_supported: ["code"],
+      },
+    });
+
+    // A different origin than the bound authorization server is refused.
+    expect(() =>
+      provider.redirectToAuthorization(new URL("https://phishing.example/authorize?state=x")),
+    ).toThrow(/invalid_external/);
+    expect(provider.authorizationUrl()).toBeNull();
+
+    // The bound authorization endpoint is accepted.
+    const authUrl = new URL(`${SAMPLE_ISSUER}/authorize?state=x`);
+    provider.redirectToAuthorization(authUrl);
+    expect(provider.authorizationUrl()?.toString()).toBe(authUrl.toString());
   });
 
   it("handles credential invalidation by scope", async () => {

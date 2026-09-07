@@ -1,4 +1,5 @@
 import { getTableColumns } from "drizzle-orm";
+import { getTableConfig } from "drizzle-orm/pg-core";
 import { describe, expect, it } from "vitest";
 
 import { authSessions, draftItems, mcpConnections, silpoOAuthStates } from "./schema";
@@ -46,6 +47,11 @@ describe("authSessions schema", () => {
     expect(columns.expiresAt.notNull).toBe(true);
     expect(columns.createdAt.notNull).toBe(true);
   });
+
+  it("O9-02 enforces the status enum in the database", () => {
+    const checks = getTableConfig(authSessions).checks.map((c) => c.name);
+    expect(checks).toContain("auth_sessions_status_check");
+  });
 });
 
 describe("silpoOAuthStates schema", () => {
@@ -73,5 +79,12 @@ describe("silpoOAuthStates schema", () => {
     expect(columns.iv.notNull).toBe(true);
     expect(columns.authTag.notNull).toBe(true);
     expect(columns.updatedAt.notNull).toBe(true);
+  });
+
+  it("O9-02 enforces phase, positive version, and active-flow invariants in the database", () => {
+    const checks = getTableConfig(silpoOAuthStates).checks.map((c) => c.name);
+    expect(checks).toContain("silpo_oauth_states_phase_check");
+    expect(checks).toContain("silpo_oauth_states_version_check");
+    expect(checks).toContain("silpo_oauth_states_active_flow_check");
   });
 });
