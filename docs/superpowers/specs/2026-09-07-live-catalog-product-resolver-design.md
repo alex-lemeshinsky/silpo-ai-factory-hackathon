@@ -4,7 +4,7 @@ Status: proposed on 2026-09-07. Documentation only; implementation has not start
 
 ## 1. Scope and authority
 
-Refines [Task 11](../../tasks.md#task-11-live-catalog-gateway-and-product-resolver) and is executed through the implementation plan that follows this document. [AGENTS.md](../../../AGENTS.md), the [product specification](../../product-spec.md), the [project architecture](../../project-architecture.md), the [agent architecture](../../agent-architecture.md), and the read-only [Silpo reference](../../../SILPO_MCP.md) retain precedence.
+Refines [Task 11](../../tasks.md#task-11-live-catalog-gateway-and-product-resolver) and is executed through the [implementation plan](../plans/2026-09-07-live-catalog-product-resolver.md). [AGENTS.md](../../../AGENTS.md), the [product specification](../../product-spec.md), the [project architecture](../../project-architecture.md), the [agent architecture](../../agent-architecture.md), and the read-only [Silpo reference](../../../SILPO_MCP.md) retain precedence.
 
 Build the read-only catalog surface over `https://mcp.silpo.ua/mcp` and the deterministic product resolver that turns `NeedCandidate[]` into `ResolvedNeed[]`: Zod parsers for the five catalog tools, a live catalog gateway that maps them to the existing shared contracts, a category query vocabulary, and the selection and ranking policy that hands Gemini only verified candidates.
 
