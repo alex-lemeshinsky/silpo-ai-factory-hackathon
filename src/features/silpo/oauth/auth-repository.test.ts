@@ -2,7 +2,9 @@ import { randomBytes } from "node:crypto";
 import { describe, expect, it } from "vitest";
 
 import {
+  authSessionSchema,
   createInMemoryAuthRepository,
+  oauthStateRowSchema,
   type ClientRegistration,
   type DiscoveryBinding,
   type OAuthPayload,
@@ -25,7 +27,7 @@ const SAMPLE_DISCOVERY: DiscoveryBinding = {
   authorizationEndpoint: "https://auth.silpo.ua/oauth2/auth",
   tokenEndpoint: "https://auth.silpo.ua/oauth2/token",
   registrationEndpoint: "https://auth.silpo.ua/oauth2/register",
-  resource: "https://api.silpo.ua/mcp",
+  resource: "https://mcp.silpo.ua/mcp",
   resourceMetadataUrl: null,
   scopesSupported: ["openid", "offline_access"],
   codeChallengeMethodsSupported: ["S256"],
@@ -154,6 +156,124 @@ describe("AuthRepository", () => {
       // New session is authenticated and can be found
       const newSession = await repo.findSession(VALID_HANDLE_B, now);
       expect(newSession?.status).toBe("authenticated");
+    });
+  });
+
+  describe("row validation and session revocation", () => {
+    it("O9-02 rejects stored rows that violate the documented lifecycle", () => {
+      expect(
+        authSessionSchema.safeParse({
+          id: "3f1d1a5e-2c9a-4f2b-9d3e-1c2b3a4d5e6f",
+          userId: "3f1d1a5e-2c9a-4f2b-9d3e-1c2b3a4d5e6f",
+          handleHash: VALID_HANDLE_A,
+          status: "authenticated",
+          expiresAt: new Date(),
+        }).success,
+      ).toBe(true);
+
+      // Unknown status, malformed hash and non-date expiry are all refused.
+      expect(
+        authSessionSchema.safeParse({
+          id: "3f1d1a5e-2c9a-4f2b-9d3e-1c2b3a4d5e6f",
+          userId: "3f1d1a5e-2c9a-4f2b-9d3e-1c2b3a4d5e6f",
+          handleHash: VALID_HANDLE_A,
+          status: "logged-in",
+          expiresAt: new Date(),
+        }).success,
+      ).toBe(false);
+      expect(
+        authSessionSchema.safeParse({
+          id: "3f1d1a5e-2c9a-4f2b-9d3e-1c2b3a4d5e6f",
+          userId: "3f1d1a5e-2c9a-4f2b-9d3e-1c2b3a4d5e6f",
+          handleHash: "not-a-hash",
+          status: "pending",
+          expiresAt: new Date(),
+        }).success,
+      ).toBe(false);
+
+      const validState = {
+        userId: "3f1d1a5e-2c9a-4f2b-9d3e-1c2b3a4d5e6f",
+        version: 2,
+        phase: "pending" as const,
+        bindingHash: VALID_HANDLE_A,
+        flowExpiresAt: new Date(),
+      };
+      expect(oauthStateRowSchema.safeParse(validState).success).toBe(true);
+      expect(
+        oauthStateRowSchema.safeParse({ ...validState, phase: "halfway" }).success,
+      ).toBe(false);
+      expect(oauthStateRowSchema.safeParse({ ...validState, version: 0 }).success).toBe(false);
+      // An active flow without a browser binding or an expiry is not a valid row.
+      expect(
+        oauthStateRowSchema.safeParse({ ...validState, bindingHash: null }).success,
+      ).toBe(false);
+      expect(
+        oauthStateRowSchema.safeParse({ ...validState, flowExpiresAt: null }).success,
+      ).toBe(false);
+      expect(
+        oauthStateRowSchema.safeParse({
+          ...validState,
+          phase: "idle",
+          bindingHash: null,
+          flowExpiresAt: null,
+        }).success,
+      ).toBe(true);
+    });
+
+    it("O9-01 revokes every handle the user holds when a new handle is installed", async () => {
+      const repo = createInMemoryAuthRepository({ encryptionKey: randomBytes(32) });
+      const now = new Date("2026-09-06T09:00:00Z");
+      const reauthPending = "c".repeat(64);
+      const rotated = "d".repeat(64);
+
+      const first = await repo.createPendingSession({
+        handleHash: VALID_HANDLE_A,
+        now,
+        expiresAt: new Date(now.getTime() + 600000),
+      });
+
+      const activate = async (oldHash: string, newHash: string) => {
+        const flow = await repo.beginFlow({
+          userId: first.userId,
+          bindingHash: oldHash,
+          flowId: `flow-${oldHash.slice(0, 4)}`,
+          state: `state-${oldHash.slice(0, 4)}`,
+          now,
+          expiresAt: new Date(now.getTime() + 600000),
+        });
+        const claimed = await repo.claimFlow({
+          userId: first.userId,
+          bindingHash: oldHash,
+          expectedVersion: flow.version,
+          now,
+        });
+        expect(claimed).not.toBeNull();
+        await repo.activateSession({
+          oldHandleHash: oldHash,
+          newHandleHash: newHash,
+          userId: first.userId,
+          expectedFlowVersion: claimed!.version,
+          now,
+          expiresAt: new Date(now.getTime() + 604800000),
+        });
+      };
+
+      await activate(VALID_HANDLE_A, VALID_HANDLE_B);
+      expect((await repo.findSession(VALID_HANDLE_B, now))?.status).toBe("authenticated");
+
+      // Reauthorization runs through a fresh pending handle for the same user.
+      await repo.createPendingSession({
+        handleHash: reauthPending,
+        now,
+        expiresAt: new Date(now.getTime() + 600000),
+        userId: first.userId,
+      });
+      await activate(reauthPending, rotated);
+
+      expect(await repo.findSession(VALID_HANDLE_A, now)).toBeNull();
+      expect(await repo.findSession(VALID_HANDLE_B, now)).toBeNull();
+      expect(await repo.findSession(reauthPending, now)).toBeNull();
+      expect((await repo.findSession(rotated, now))?.status).toBe("authenticated");
     });
   });
 

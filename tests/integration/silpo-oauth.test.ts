@@ -20,7 +20,7 @@ import {
 
 const SAMPLE_BASE_URL = "https://app.silpo-test.ua";
 const SAMPLE_ISSUER = "https://auth.silpo.ua";
-const SAMPLE_SERVER_URL = "https://api.silpo.ua/mcp";
+const SAMPLE_SERVER_URL = "https://mcp.silpo.ua/mcp";
 
 function makeEnv(overrides: Partial<ServerEnv> = {}): ServerEnv {
   return {
@@ -704,5 +704,9 @@ describe("Silpo OAuth Routes — End-to-End Route Integration with Real SDK & Ne
     // 4. Verify previous pending session handle is revoked
     const oldPendingResolve = await service.resolveSession(pendingCookie2.value, "corr-old-pending");
     expect(oldPendingResolve.ok).toBe(false);
+
+    // 5. O9-01: the authenticated handle that initiated reauthorization is dead
+    const staleAuthResolve = await service.resolveSession(authCookie1.value, "corr-stale-auth");
+    expect(staleAuthResolve.ok).toBe(false);
   });
 });

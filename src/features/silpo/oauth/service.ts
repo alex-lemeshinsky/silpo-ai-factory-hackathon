@@ -256,7 +256,10 @@ export function createSilpoOAuthService(options: CreateSilpoOAuthServiceOptions 
             expiresAt: flowExpiresAt,
           });
         } catch (error: unknown) {
-          if (error instanceof Error && error.message === "flow_processing") {
+          if (
+            error instanceof Error &&
+            (error.message === "flow_processing" || error.message === "flow_conflict")
+          ) {
             return err({
               status: 409,
               error: {

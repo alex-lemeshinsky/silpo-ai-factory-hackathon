@@ -630,7 +630,7 @@ git commit -m "feat: encrypt Silpo OAuth tokens"
 - Test: `src/features/silpo/oauth/auth-repository.test.ts`
 - Modify: `src/db/schema.ts`
 - Modify: `src/db/schema.test.ts`
-- Create: `drizzle/0003_silpo_oauth.sql`, `drizzle/meta/0003_snapshot.json`, `drizzle/meta/_journal.json`
+- Create: `drizzle/0003_silpo_oauth.sql`, `drizzle/meta/0003_snapshot.json`, `drizzle/0004_silpo_oauth_invariants.sql`, `drizzle/meta/0004_snapshot.json`, `drizzle/meta/_journal.json`
 - Create: `src/features/silpo/oauth/provider.ts`
 - Test: `src/features/silpo/oauth/provider.test.ts`
 - Create: `src/features/silpo/oauth/transport.ts`
@@ -673,6 +673,11 @@ Expected: PASS.
 git add src/features/silpo/oauth/provider.ts src/app/api/auth/silpo tests/integration/silpo-oauth.test.ts package.json pnpm-lock.yaml
 git commit -m "feat: add Silpo OAuth flow"
 ```
+
+**Outstanding verification (blocks marking Task 9 done):** the mandatory real-database gate
+`pnpm vitest run tests/integration/silpo-oauth-postgres.test.ts` requires `DATABASE_URL` and has not
+been executed; the read-only live OAuth smoke has not been performed either. Both are required by
+[specification section 8](./superpowers/specs/2026-09-06-silpo-oauth-design.md).
 
 ---
 

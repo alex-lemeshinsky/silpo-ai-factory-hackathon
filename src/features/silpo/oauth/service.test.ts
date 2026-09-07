@@ -375,6 +375,12 @@ describe("Silpo OAuth Service", () => {
       // Previous pending session handle is revoked
       const oldPendingSession = await repo.findSession(pendingHash, now);
       expect(oldPendingSession).toBeNull();
+
+      // O9-01: the authenticated handle that initiated reauthorization must not
+      // outlive the rotation, or a copied cookie stays valid for seven days.
+      expect(await repo.findSession(existingAuthHash, now)).toBeNull();
+      const staleResolved = await service.resolveSession(existingAuthHandle, "corr-reauth-stale");
+      expect(staleResolved.ok).toBe(false);
     });
 
     it("state mismatch: timing-safe comparison fails, does NOT call finishAuth or activateSession, does NOT consume flow, clearCookie is false", async () => {

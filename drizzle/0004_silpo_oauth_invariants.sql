@@ -1,0 +1,4 @@
+ALTER TABLE "auth_sessions" ADD CONSTRAINT "auth_sessions_status_check" CHECK ("auth_sessions"."status" IN ('pending', 'authenticated', 'revoked'));--> statement-breakpoint
+ALTER TABLE "silpo_oauth_states" ADD CONSTRAINT "silpo_oauth_states_version_check" CHECK ("silpo_oauth_states"."version" > 0);--> statement-breakpoint
+ALTER TABLE "silpo_oauth_states" ADD CONSTRAINT "silpo_oauth_states_phase_check" CHECK ("silpo_oauth_states"."phase" IN ('idle', 'pending', 'processing'));--> statement-breakpoint
+ALTER TABLE "silpo_oauth_states" ADD CONSTRAINT "silpo_oauth_states_active_flow_check" CHECK ("silpo_oauth_states"."phase" = 'idle' OR ("silpo_oauth_states"."binding_hash" IS NOT NULL AND "silpo_oauth_states"."flow_expires_at" IS NOT NULL));

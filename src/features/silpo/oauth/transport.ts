@@ -36,11 +36,14 @@ export interface CreateSilpoOAuthConnectionOptions {
   allowInsecureDevHttp?: boolean;
 }
 
-const DEFAULT_SERVER_URL = "https://api.silpo.ua/mcp";
+/** Documented official Silpo MCP endpoint (SILPO_MCP.md). */
+export const SILPO_MCP_SERVER_URL = "https://mcp.silpo.ua/mcp";
+
+const DEFAULT_SERVER_URL = SILPO_MCP_SERVER_URL;
 const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
 const DEFAULT_OPERATION_TIMEOUT_MS = 30_000;
 
-function isPrivateOrLoopbackIp(raw: string): boolean {
+export function isPrivateOrLoopbackIp(raw: string): boolean {
   let normalized = raw.toLowerCase();
   if (normalized.startsWith("[") && normalized.endsWith("]")) {
     normalized = normalized.slice(1, -1);
@@ -128,6 +131,31 @@ async function defaultLookupIp(hostname: string): Promise<string[]> {
   return results.map((r) => r.address);
 }
 
+/** Headers that must never survive a change of recipient origin. */
+const CREDENTIAL_HEADERS = ["authorization", "cookie", "proxy-authorization"];
+
+/**
+ * A sleep that loses the race against the operation deadline instead of
+ * outliving it, so a hostile Retry-After cannot hold the request open.
+ */
+function abortableDelay(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) {
+      reject(new Error("operation timed out"));
+      return;
+    }
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(new Error("operation timed out"));
+    };
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
 export function sanitizeAuthorizationHeader(
   url: URL,
   headers: Headers,
@@ -182,6 +210,7 @@ export function createSilpoOAuthConnection(
   };
 
   const connectionAbortController = new AbortController();
+  const operationDeadline = Date.now() + operationTimeoutMs;
   const operationTimeoutId = setTimeout(() => {
     connectionAbortController.abort(new Error("operation_timed_out"));
   }, operationTimeoutMs);
@@ -308,8 +337,13 @@ export function createSilpoOAuthConnection(
                 delayMs = seconds * 1000;
               }
             }
+            // Provider-supplied delays never extend the operation deadline:
+            // a wait that cannot fit ends the retry loop instead.
+            if (delayMs > operationDeadline - Date.now()) {
+              break;
+            }
             if (delayMs > 0) {
-              await new Promise((resolve) => setTimeout(resolve, delayMs));
+              await abortableDelay(delayMs, connectionAbortController.signal);
             }
             response = await executeFetch();
           }
@@ -334,18 +368,38 @@ export function createSilpoOAuthConnection(
         if (!location) {
           return response;
         }
-        currentUrl = new URL(location, currentUrl);
+
+        const nextUrl = new URL(location, currentUrl);
+        const crossOrigin = nextUrl.origin !== currentUrl.origin;
+        // Change method to GET for 301/302/303 per HTTP spec
+        const becomesGet =
+          response.status === 303 ||
+          ((response.status === 301 || response.status === 302) && method === "POST");
+
+        if (crossOrigin) {
+          // Grant material and any other request body belong to the origin the
+          // request was addressed to; they are never replayed elsewhere.
+          if (isTokenRequest || (!becomesGet && method !== "GET" && method !== "HEAD")) {
+            throw new Error("invalid_external_cross_origin_redirect");
+          }
+        }
+
         redirectCount += 1;
         if (redirectCount > MAX_REDIRECTS) {
           throw new Error("too_many_redirects");
         }
-        // Change method to GET for 301/302/303 per HTTP spec
-        if (
-          response.status === 303 ||
-          ((response.status === 301 || response.status === 302) && method === "POST")
-        ) {
-          currentInit = { ...currentInit, method: "GET", body: undefined };
+
+        const nextHeaders = new Headers(headers);
+        if (crossOrigin) {
+          for (const name of CREDENTIAL_HEADERS) {
+            nextHeaders.delete(name);
+          }
         }
+
+        currentInit = becomesGet
+          ? { ...currentInit, method: "GET", body: undefined, headers: nextHeaders }
+          : { ...currentInit, headers: nextHeaders };
+        currentUrl = nextUrl;
         continue;
       }
 

@@ -1,4 +1,5 @@
 import {
+  check,
   doublePrecision,
   index,
   integer,
@@ -208,6 +209,10 @@ export const authSessions = pgTable(
   (table) => [
     index("auth_sessions_user_id_idx").on(table.userId),
     index("auth_sessions_expires_at_idx").on(table.expiresAt),
+    check(
+      "auth_sessions_status_check",
+      sql`${table.status} IN ('pending', 'authenticated', 'revoked')`,
+    ),
   ],
 );
 
@@ -229,4 +234,15 @@ export const silpoOAuthStates = pgTable(
     authTag: text("auth_tag").notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },
+  (table) => [
+    check("silpo_oauth_states_version_check", sql`${table.version} > 0`),
+    check(
+      "silpo_oauth_states_phase_check",
+      sql`${table.phase} IN ('idle', 'pending', 'processing')`,
+    ),
+    check(
+      "silpo_oauth_states_active_flow_check",
+      sql`${table.phase} = 'idle' OR (${table.bindingHash} IS NOT NULL AND ${table.flowExpiresAt} IS NOT NULL)`,
+    ),
+  ],
 );

@@ -217,7 +217,7 @@ Browser → /api/auth/silpo/start
   → transport.finishAuth(code, iss)
   → encrypt & save tokens in vault (AES-256-GCM)
   → connection probe via tools/list
-  → atomic session rotation: revoke old session, issue authenticated session (7 days lifetime)
+  → atomic session rotation: revoke every handle of the internal user, issue authenticated session (7 days lifetime)
   → clear pending flow secrets
   → 303 Redirect to fixed application landing (/) with rotated cookie
 ```
@@ -225,6 +225,9 @@ Browser → /api/auth/silpo/start
 Правила сесій та автентифікації:
 - Браузер отримує лише непрозорий криптографічний хендл (32 байти base64url) у cookie `silpo_session` (`HttpOnly`, `SameSite=Lax`, `Path=/`, host-only, `Secure` у production). У базі зберігається виключно SHA-256 дайджест (`handle_hash`). Клієнтський `userId` ніколи не приймається з тіла, заголовків чи query.
 - Строк дії pending flow та pending cookie — не більше 10 хвилин (600 с). Строк дії авторизованої сесії — 7 днів (604 800 с, абсолютний, non-sliding).
+- Успішна ротація в одній транзакції відкликає всі наявні хендли внутрішнього користувача, а не лише хендл поточного flow: після повторної авторизації попередній authenticated-хендл (у тому числі скопійований) більше не діє.
+- Політика призначення однакова для серверних запитів і для браузерного редиректу авторизації: лише HTTPS, без приватних, loopback і link-local адрес, і лише origin прив'язаного authorization server. Неповні або невалідні discovery-метадані відхиляються — endpoint'и ніколи не добудовуються за здогадом.
+- Редирект зі зміною origin ніколи не переносить облікові дані: заголовки `Authorization`, `Cookie`, `Proxy-Authorization` знімаються, а тіло запиту (grant або реєстрація клієнта) на інший origin не повторюється. Пауза за `Retry-After` обмежена залишком 30-секундного бюджету операції.
 - Фіксований landing після успішного входу — кореневий маршрут застосунку (`/`). Авторизація не генерує чернетку автоматично й не позначає демо-дані як live (це зона відповідальності Tasks 13–14).
 - Єдиний власник оновлення токенів (one-refresh owner) — транспорт `transport.ts`: дозволена максимум одна спроба оновлення токенів на логічну операцію читання. Операції запису кошика (Task 16) використовують окремий bearer-only транспорт без авто-оновлення.
 - Атомарний claim колбеку (`pending` → `processing`) через compare-and-swap (CAS) з перевіркою версії, binding hash і строку дії усуває гонки й гарантує одноразовість колбеку (replay protection). При паралельному запиті або повторі другий запит отримує `unauthorized` без виклику мережевого обміну коду.
@@ -282,8 +285,8 @@ customer + cart context
 
 - `users`: внутрішній ID і мінімальні settings;
 - `mcp_connections`: окремі AES-256-GCM ciphertext, IV і auth tag, expiry, scope та OAuth metadata; legacy ciphertext зберігається до окремої безпечної міграції, а partial unique index дозволяє лише один new-format envelope на користувача;
-- `auth_sessions`: внутрішній session ID, `user_id` (FK → `users`, delete cascade), unique SHA-256 `handle_hash`, `status` (`pending`, `authenticated`, `revoked`), `expires_at` (до 10 хв для pending, 7 днів для authenticated), `created_at`; індекси по `user_id` та `expires_at`;
-- `silpo_oauth_states`: unique `user_id` (FK → `users`, delete cascade), `version` positive integer, `phase` (`idle`, `pending`, `processing`), nullable `binding_hash`, nullable `flow_expires_at` (до 10 хв від старту), окремі AES-256-GCM `ciphertext`, `iv`, `auth_tag` для збереження зашифрованих pending flow ID, state, PKCE verifier, client registration та discovery binding, `updated_at`;
+- `auth_sessions`: внутрішній session ID, `user_id` (FK → `users`, delete cascade), unique SHA-256 `handle_hash`, `status` (`pending`, `authenticated`, `revoked`, CHECK-обмеження), `expires_at` (до 10 хв для pending, 7 днів для authenticated), `created_at`; індекси по `user_id` та `expires_at`;
+- `silpo_oauth_states`: unique `user_id` (FK → `users`, delete cascade), `version` positive integer (CHECK `> 0`), `phase` (`idle`, `pending`, `processing`, CHECK-обмеження), nullable `binding_hash`, nullable `flow_expires_at` (до 10 хв від старту; CHECK вимагає binding hash і строк дії для активного flow), окремі AES-256-GCM `ciphertext`, `iv`, `auth_tag` для збереження зашифрованих pending flow ID, state, PKCE verifier, client registration та discovery binding, `updated_at`; кожен прочитаний рядок валідується схемою перед використанням;
 - `purchase_receipts`: channel, timestamp, city, totals, external fingerprint;
 - `purchase_items`: receipt, external product ID, category, quantity, unit price;
 - `product_snapshots`: product/external ID, branch, price, stock, attributes, `captured_at`;
