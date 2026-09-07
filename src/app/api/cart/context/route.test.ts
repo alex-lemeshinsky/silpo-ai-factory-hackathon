@@ -163,6 +163,75 @@ describe("POST /api/cart/context", () => {
     await expect(response.json()).resolves.toMatchObject({ mode: "demo" });
   });
 
+  it("returns 400 when an address change is requested", async () => {
+    const { AddressChangeUnsupportedError } = await vi.importActual<
+      typeof import("@/features/silpo/live/cart-context")
+    >("@/features/silpo/live/cart-context");
+    createLiveCartContextGateway.mockReturnValue({
+      updateCartContext: vi.fn(async () => {
+        throw new AddressChangeUnsupportedError();
+      }),
+    });
+
+    const response = await POST(makeRequest(body));
+
+    expect(response.status).toBe(400);
+  });
+
+  it("returns 409 when the requested delivery type is unavailable", async () => {
+    const { DeliveryTypeUnavailableError } = await vi.importActual<
+      typeof import("@/features/silpo/live/cart-context")
+    >("@/features/silpo/live/cart-context");
+    createLiveCartContextGateway.mockReturnValue({
+      updateCartContext: vi.fn(async () => {
+        throw new DeliveryTypeUnavailableError("pickup");
+      }),
+    });
+
+    const response = await POST(makeRequest(body));
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: "cart_validation_error" },
+    });
+  });
+
+  it("returns 409 when the readback contradicts the write", async () => {
+    const { SlotVerificationError } = await vi.importActual<
+      typeof import("@/features/silpo/live/cart-context")
+    >("@/features/silpo/live/cart-context");
+    createLiveCartContextGateway.mockReturnValue({
+      updateCartContext: vi.fn(async () => {
+        throw new SlotVerificationError();
+      }),
+    });
+
+    const response = await POST(makeRequest(body));
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: "cart_validation_error" },
+    });
+  });
+
+  it("reports the server's Retry-After on a 429", async () => {
+    const { McpCallError } = await vi.importActual<typeof import("@/features/silpo/live/session")>(
+      "@/features/silpo/live/session",
+    );
+    createLiveCartContextGateway.mockReturnValue({
+      updateCartContext: vi.fn(async () => {
+        throw new McpCallError("silpo_update_shopping_cart", 429, "4");
+      }),
+    });
+
+    const response = await POST(makeRequest(body));
+
+    expect(response.status).toBe(429);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: "rate_limited", retryAfterMs: 4000 },
+    });
+  });
+
   it("never leaks provider text into an error body", async () => {
     createLiveCartContextGateway.mockReturnValue({
       updateCartContext: vi.fn(async () => {

@@ -246,7 +246,9 @@ tools/list
   → get_shopping_cart_by_id → get_time_slots
 ```
 
-Expired slot повертає `needs_slot` і доступні слоти. Cart-dependent history/catalog operations не продовжуються до вибору валідного слота. Оновлення слота копіює address і shipments із readback, викликає `silpo_update_shopping_cart`, потім одразу перечитує і перевіряє контекст.
+Expired slot повертає `needs_slot` і доступні слоти. Cart-dependent history/catalog operations не продовжуються до вибору валідного слота. Оновлення слота копіює address і shipments із readback, викликає `silpo_update_shopping_cart`, потім одразу перечитує і перевіряє контекст — і слот, і спосіб доставки.
+
+`CartContext.deliveryType` має два значення там, де «Сільпо» документує вісім, тому зворотне відображення заборонене: реальний тип завжди береться з readback кошика. Запит на зміну способу доставки резолвиться через `silpo_get_available_delivery_types`; запит на зміну адреси відхиляється явно, бо адреса копіюється з readback без змін. Жодне поле входу не приймається мовчки без наслідків.
 
 ### 7.3. Draft generation
 
@@ -335,6 +337,7 @@ Read-only MCP calls після `429` повторюються не більше 
 - Bounded network deadlines: таймаут окремого мережевого виклику авторизації становить 10 с, загальний дедлайн мережевої фази start/callback — 30 с.
 - Операції запису кошика використовують окремий bearer-only транспорт (`openWriteSession`) без авто-відновлення чи refresh/retry: 401 на записі негайно повертає контроль без повторного оновлення токенів чи повторного виклику мутації. Транспорт уводить Task 10 (перший запис кошика — встановлення контексту доставки); Task 16 використовує його без змін.
 - Retry для read-only викликів виконується на рівні `callTool`, а не fetch: у HTTP-шарі read і cart write однаково є `POST /mcp` і не розрізняються. Write-сесія не має коду retry взагалі.
+- `SdkHttpError` не несе заголовків відповіді, тому `Retry-After` перехоплюється на рівні fetch (де ще існує сирий `Response`) і додається до `McpCallError`. Без цього серверні retry-метадані були б недосяжні, а клієнт ніколи не отримував би `retryAfterMs`.
 - Усі помилки мапляться в стандартизовані безпечні повідомлення без витоку URL, query, заголовків чи стек-трейсів згідно з [специфікацією Silpo OAuth](./superpowers/specs/2026-09-06-silpo-oauth-design.md#o9-06--one-refresh-owner-and-readwrite-separation).
 
 ## 10. Безпека та приватність

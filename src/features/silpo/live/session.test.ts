@@ -1,8 +1,14 @@
+import { randomBytes } from "node:crypto";
+
 import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
+import { createInMemoryAuthRepository } from "../oauth/auth-repository";
+import { createSilpoOAuthProvider } from "../oauth/provider";
+import { createInMemoryTokenVaultStorage, createTokenVault } from "../oauth/token-vault";
+
 import { InvalidExternalDataError } from "../schemas/common";
-import { openReadSession, openWriteSession, UnadvertisedToolError } from "./session";
+import { McpCallError, openReadSession, openWriteSession, UnadvertisedToolError } from "./session";
 
 // Minimal JSON-RPC responder over the streamable HTTP transport.
 // `handlers` maps a tool name to the structuredContent it returns.
@@ -10,6 +16,7 @@ function createMcpFetch(options: {
   tools: string[];
   handlers?: Record<string, () => unknown>;
   statusQueue?: number[];
+  retryAfter?: string;
 }) {
   const calls: { method: string; tool?: string }[] = [];
   let statusIndex = 0;
@@ -29,7 +36,7 @@ function createMcpFetch(options: {
         if (forcedStatus !== 200) {
           return new Response("", {
             status: forcedStatus,
-            headers: { "Retry-After": "0" },
+            headers: { "Retry-After": options.retryAfter ?? "0" },
           });
         }
       }
@@ -81,6 +88,9 @@ function createProviderStub() {
     currentState: () => ({ version: 1 }),
   } as never;
 }
+
+const SAMPLE_SERVER_URL = "https://mcp.silpo.ua/mcp";
+const SAMPLE_ISSUER = "https://auth.silpo.ua";
 
 const baseOptions = () => ({
   provider: createProviderStub(),
@@ -196,6 +206,113 @@ describe("openWriteSession", () => {
   });
 });
 
+describe("destination safety", () => {
+  it("refuses an insecure server URL before opening anything", async () => {
+    const { fakeFetch, calls } = createMcpFetch({ tools: ["t"] });
+
+    await expect(
+      openReadSession({
+        ...baseOptions(),
+        fetch: fakeFetch,
+        serverUrl: "http://mcp.silpo.ua/mcp",
+      }),
+    ).rejects.toThrow("insecure_protocol");
+    expect(calls).toEqual([]);
+  });
+
+  it("refuses a loopback server URL before opening anything", async () => {
+    const { fakeFetch, calls } = createMcpFetch({ tools: ["t"] });
+
+    await expect(
+      openWriteSession({
+        ...baseOptions(),
+        fetch: fakeFetch,
+        serverUrl: "https://127.0.0.1/mcp",
+      }),
+    ).rejects.toThrow("insecure_destination_ip");
+    expect(calls).toEqual([]);
+  });
+});
+
+describe("server retry metadata", () => {
+  it("waits the server-provided Retry-After instead of the local ladder", async () => {
+    const slept: number[] = [];
+    const { fakeFetch } = createMcpFetch({
+      tools: ["silpo_get_my_shopping_cart"],
+      statusQueue: [200, 200, 429, 429, 429, 429],
+      retryAfter: "2",
+    });
+    const session = await openReadSession({
+      ...baseOptions(),
+      fetch: fakeFetch,
+      sleep: async (ms) => {
+        slept.push(ms);
+      },
+    });
+
+    await expect(
+      session.callTool("silpo_get_my_shopping_cart", {}, z.object({})),
+    ).rejects.toThrow();
+
+    // 2 seconds, exactly as the server asked, not 250/500/1000 + jitter.
+    expect(slept).toEqual([2000, 2000, 2000]);
+
+    await session.close();
+  });
+
+  it("carries the Retry-After onto the error so the route can report it", async () => {
+    const { fakeFetch } = createMcpFetch({
+      tools: ["silpo_get_my_shopping_cart"],
+      statusQueue: [200, 200, 429, 429, 429, 429],
+      retryAfter: "3",
+    });
+    const session = await openReadSession({
+      ...baseOptions(),
+      fetch: fakeFetch,
+      sleep: async () => {},
+    });
+
+    const error = await session
+      .callTool("silpo_get_my_shopping_cart", {}, z.object({}))
+      .then(() => null)
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(McpCallError);
+    expect((error as McpCallError).status).toBe(429);
+    expect((error as McpCallError).retryAfterHeader).toBe("3");
+
+    await session.close();
+  });
+
+  it("falls back to the local ladder when the server sends no Retry-After", async () => {
+    const slept: number[] = [];
+    const { fakeFetch } = createMcpFetch({
+      tools: ["silpo_get_my_shopping_cart"],
+      statusQueue: [200, 200, 429, 429, 429, 429],
+      retryAfter: "",
+    });
+    const session = await openReadSession({
+      ...baseOptions(),
+      fetch: fakeFetch,
+      sleep: async (ms) => {
+        slept.push(ms);
+      },
+    });
+
+    await expect(
+      session.callTool("silpo_get_my_shopping_cart", {}, z.object({})),
+    ).rejects.toThrow();
+
+    expect(slept).toHaveLength(3);
+    expect(slept[0]).toBeGreaterThanOrEqual(250);
+    expect(slept[0]).toBeLessThanOrEqual(500);
+    expect(slept[1]).toBeGreaterThanOrEqual(500);
+    expect(slept[2]).toBeGreaterThanOrEqual(1000);
+
+    await session.close();
+  });
+});
+
 // These two pin the real error shapes against the actual MCP client rather
 // than against our assumptions about them.
 describe("external failure shapes", () => {
@@ -225,25 +342,96 @@ describe("external failure shapes", () => {
     await session.close();
   });
 
-  it("delegates a read 401 to at most one refresh, and a write 401 to none", async () => {
-    // Counts POSTs to the token endpoint, which is how a refresh becomes
-    // visible. `createSyntheticFetch` in
-    // src/features/silpo/oauth/transport.test.ts is the fuller version of
-    // this fixture — read it if the OAuth handshake needs more fidelity here.
+  it("delegates a read 401 to exactly one refresh, and a write 401 to none", async () => {
+    // Uses the real provider over in-memory storage rather than a stub: the
+    // SDK's auth() path reads clientMetadata, clientInformation and tokens,
+    // and a stub that omits any of them makes this test pass vacuously.
+    async function buildProvider() {
+      const encryptionKey = randomBytes(32);
+      const repository = createInMemoryAuthRepository({ encryptionKey });
+      const now = new Date("2026-09-07T10:00:00Z");
+      const vault = createTokenVault({
+        storage: createInMemoryTokenVaultStorage(),
+        encryptionKey,
+        now: () => now,
+      });
+
+      const authSession = await repository.createPendingSession({
+        handleHash: randomBytes(32).toString("hex"),
+        now,
+        expiresAt: new Date(now.getTime() + 600_000),
+      });
+      await repository.beginFlow({
+        userId: authSession.userId,
+        bindingHash: authSession.handleHash,
+        flowId: "flow-1",
+        state: "state-1",
+        now,
+        expiresAt: new Date(now.getTime() + 600_000),
+      });
+
+      const provider = await createSilpoOAuthProvider(authSession.userId, {
+        vault,
+        repository,
+        publicBaseUrl: "https://app.silpo-test.ua",
+        now: () => now,
+      });
+
+      await provider.saveClientInformation({
+        client_id: "test-client-id",
+        client_secret: "test-client-secret",
+        issuer: SAMPLE_ISSUER,
+      });
+      await provider.saveTokens({
+        access_token: "expired-access-token",
+        refresh_token: "test-refresh-token",
+        token_type: "Bearer",
+      });
+
+      return provider;
+    }
+
+    // Serves enough OAuth discovery for a refresh grant to actually be
+    // attempted, so the read assertion can tell one refresh from none.
     function createUnauthorizedFetch() {
-      let tokenRequests = 0;
-      const { fakeFetch } = createMcpFetch({ tools: ["silpo_get_my_shopping_cart", "silpo_update_shopping_cart"] });
+      const grants: string[] = [];
+      const { fakeFetch } = createMcpFetch({
+        tools: ["silpo_get_my_shopping_cart", "silpo_update_shopping_cart"],
+      });
 
       const wrapped: typeof fetch = async (input, init) => {
         const request = input instanceof Request ? input : new Request(input, init);
         const url = new URL(request.url);
-
-        if (url.pathname.endsWith("/token")) {
-          tokenRequests += 1;
-          return new Response(JSON.stringify({ error: "invalid_grant" }), {
-            status: 400,
+        const json = (payload: unknown, status = 200) =>
+          new Response(JSON.stringify(payload), {
+            status,
             headers: { "Content-Type": "application/json" },
           });
+
+        if (url.pathname.startsWith("/.well-known/oauth-protected-resource")) {
+          return json({ resource: SAMPLE_SERVER_URL, authorization_servers: [SAMPLE_ISSUER] });
+        }
+        if (
+          url.pathname.startsWith("/.well-known/oauth-authorization-server") ||
+          url.pathname.startsWith("/.well-known/openid-configuration")
+        ) {
+          return json({
+            issuer: SAMPLE_ISSUER,
+            authorization_endpoint: `${SAMPLE_ISSUER}/authorize`,
+            token_endpoint: `${SAMPLE_ISSUER}/token`,
+            registration_endpoint: `${SAMPLE_ISSUER}/register`,
+            response_types_supported: ["code"],
+            code_challenge_methods_supported: ["S256"],
+            grant_types_supported: ["authorization_code", "refresh_token"],
+            token_endpoint_auth_methods_supported: ["client_secret_post"],
+          });
+        }
+        if (url.pathname.endsWith("/token")) {
+          const raw =
+            typeof init?.body === "string" ? init.body : await request.clone().text();
+          grants.push(new URLSearchParams(raw).get("grant_type") ?? "unknown");
+          // Rejected, so the flow ends in reauthorization instead of looping.
+          return json({ error: "invalid_grant" }, 400);
         }
 
         const body = await request.clone().text();
@@ -254,27 +442,36 @@ describe("external failure shapes", () => {
         return fakeFetch(input, init);
       };
 
-      return { wrapped, tokenRequests: () => tokenRequests };
+      return {
+        wrapped,
+        refreshAttempts: () => grants.filter((grant) => grant === "refresh_token").length,
+      };
     }
 
     const read = createUnauthorizedFetch();
     const readSession = await openReadSession({
-      ...baseOptions(),
+      provider: await buildProvider(),
+      lookupIp: async () => ["203.0.113.10"],
       fetch: read.wrapped,
       sleep: async () => {},
     });
     await expect(
       readSession.callTool("silpo_get_my_shopping_cart", {}, z.object({})),
     ).rejects.toThrow();
-    expect(read.tokenRequests()).toBeLessThanOrEqual(1);
+    // Exactly one: proves the delegation happens and that it stays bounded.
+    expect(read.refreshAttempts()).toBe(1);
     await readSession.close();
 
     const write = createUnauthorizedFetch();
-    const writeSession = await openWriteSession({ ...baseOptions(), fetch: write.wrapped });
+    const writeSession = await openWriteSession({
+      provider: await buildProvider(),
+      lookupIp: async () => ["203.0.113.10"],
+      fetch: write.wrapped,
+    });
     await expect(
       writeSession.callTool("silpo_update_shopping_cart", {}, z.object({})),
     ).rejects.toThrow();
-    expect(write.tokenRequests()).toBe(0);
+    expect(write.refreshAttempts()).toBe(0);
     await writeSession.close();
   });
 

@@ -9,6 +9,7 @@ import {
 } from "@/features/shared/contracts";
 
 import {
+  AcknowledgedWriteSchema,
   BranchesSchema,
   CreatedCartSchema,
   DeliveryAddressesSchema,
@@ -39,11 +40,31 @@ export class SlotUnavailableError extends Error {
   }
 }
 
-/** The cart readback did not confirm the slot that was just requested. */
+/** The cart readback did not confirm what was just requested. */
 export class SlotVerificationError extends Error {
   constructor() {
     super("slot_verification_failed");
     this.name = "SlotVerificationError";
+  }
+}
+
+/** No Silpo delivery type at this address matches the requested mode. */
+export class DeliveryTypeUnavailableError extends Error {
+  constructor(readonly requested: "delivery" | "pickup") {
+    super("delivery_type_unavailable");
+    this.name = "DeliveryTypeUnavailableError";
+  }
+}
+
+/**
+ * The caller asked for a different delivery address. The backlog requires the
+ * cart's address to be copied verbatim from the readback, so this task cannot
+ * honour the request — and must say so rather than accept and drop the field.
+ */
+export class AddressChangeUnsupportedError extends Error {
+  constructor() {
+    super("address_change_unsupported");
+    this.name = "AddressChangeUnsupportedError";
   }
 }
 
@@ -132,6 +153,41 @@ export function createLiveCartContextGateway(deps: LiveCartContextDeps): LiveCar
     };
   }
 
+  /**
+   * Returns the Silpo delivery type to use for a requested domain mode.
+   *
+   * The domain contract has two values where Silpo documents eight, so a
+   * request that already matches the cart keeps the cart's exact type; only a
+   * genuine mode change consults the available types.
+   */
+  async function resolveDeliveryType(
+    cart: SilpoShoppingCart,
+    requested: "delivery" | "pickup",
+  ): Promise<string> {
+    if (mapDeliveryType(cart.deliveryType) === requested) {
+      return cart.deliveryType;
+    }
+
+    const latitude = cart.address?.latitude ?? null;
+    const longitude = cart.address?.longitude ?? null;
+    if (latitude === null || longitude === null) {
+      throw new DeliveryTypeUnavailableError(requested);
+    }
+
+    const types = await readSession.callTool(
+      "silpo_get_available_delivery_types",
+      { latitude, longitude },
+      DeliveryTypesSchema,
+    );
+    const match = types.deliveryTypes.find(
+      (candidate) => mapDeliveryType(candidate.deliveryType) === requested,
+    );
+    if (!match) {
+      throw new DeliveryTypeUnavailableError(requested);
+    }
+    return match.deliveryType;
+  }
+
   async function bootstrapCart(): Promise<string> {
     const saved = await readSession.callTool(
       "silpo_get_my_delivery_addresses",
@@ -156,7 +212,9 @@ export function createLiveCartContextGateway(deps: LiveCartContextDeps): LiveCar
     );
     const preferred = types.deliveryTypes[0];
     if (!preferred) {
-      throw new NoSavedAddressError();
+      // The guest has an address; nothing is deliverable to it. Reusing the
+      // address error here would report the wrong cause.
+      throw new DeliveryTypeUnavailableError("delivery");
     }
 
     let branchId = preferred.branchId;
@@ -214,6 +272,10 @@ export function createLiveCartContextGateway(deps: LiveCartContextDeps): LiveCar
     async updateCartContext(input: UpdateCartContextInput): Promise<CartContext> {
       const parsed = UpdateCartContextInputSchema.parse(input);
 
+      if (parsed.addressId !== null) {
+        throw new AddressChangeUnsupportedError();
+      }
+
       const mine = await readSession.callTool(
         "silpo_get_my_shopping_cart",
         {},
@@ -224,7 +286,12 @@ export function createLiveCartContextGateway(deps: LiveCartContextDeps): LiveCar
       }
 
       const cart = await readCart(mine.cartId);
-      const slots = await listSlots(parsed.branchId ?? cart.branchId, cart.deliveryType);
+      const deliveryType = await resolveDeliveryType(cart, parsed.deliveryType);
+      const branchId = parsed.branchId ?? cart.branchId;
+
+      // Slots are listed for the delivery type being applied, so a mode change
+      // is matched against the right set rather than the cart's previous one.
+      const slots = await listSlots(branchId, deliveryType);
       const target = slots.slots.find((slot) => slot.id === parsed.slotId);
       if (!target || !target.available) {
         throw new SlotUnavailableError(parsed.slotId);
@@ -237,17 +304,22 @@ export function createLiveCartContextGateway(deps: LiveCartContextDeps): LiveCar
         "silpo_update_shopping_cart",
         {
           cartId: cart.id,
-          branchId: parsed.branchId ?? cart.branchId,
+          branchId,
+          deliveryType,
           address: cart.address,
           shipments: cart.shipments,
           timeslot: { start: target.start, end: target.end },
         },
-        CreatedCartSchema,
+        AcknowledgedWriteSchema,
       );
 
       // Immediate readback: the write is not trusted until the server agrees.
       const verified = await readCart(cart.id);
       if (verified.timeslot?.id !== parsed.slotId) {
+        throw new SlotVerificationError();
+      }
+      // A context that contradicts the request is never returned as success.
+      if (mapDeliveryType(verified.deliveryType) !== parsed.deliveryType) {
         throw new SlotVerificationError();
       }
 
@@ -261,8 +333,11 @@ export function createLiveCartContextGateway(deps: LiveCartContextDeps): LiveCar
     },
 
     async getTimeSlots(context: CartContext): Promise<TimeSlot[]> {
-      const deliveryType = context.deliveryType === "pickup" ? "SelfPickup" : "DeliveryHome";
-      const slots = await listSlots(context.branchId, deliveryType);
+      // `CartContext.deliveryType` collapses eight Silpo types into two, so it
+      // cannot be reversed: "delivery" could be WideAssortDelivery, NovaPoshta
+      // or any other. The cart readback carries the real one.
+      const cart = await readCart(context.cartId);
+      const slots = await listSlots(cart.branchId, cart.deliveryType);
       return slots.slots.map(toDomainSlot);
     },
   };

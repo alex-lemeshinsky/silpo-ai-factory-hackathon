@@ -133,3 +133,10 @@ export type SilpoDeliveryAddress = z.infer<typeof DeliveryAddressesSchema>["addr
 export const CreatedCartSchema = z.object({
   cartId: nonEmptyString,
 });
+
+/**
+ * Response schema for a write whose effect is confirmed by an immediate cart
+ * readback. Silpo's acknowledgement body is not part of that proof, so
+ * validating its shape would turn a successful write into a false failure.
+ */
+export const AcknowledgedWriteSchema = z.unknown();

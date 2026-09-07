@@ -23,9 +23,12 @@ export class InvalidExternalDataError extends Error {
  */
 export function parseToolResult<T>(tool: string, result: unknown, schema: z.ZodType<T>): T {
   const envelope = result as { structuredContent?: unknown } | null | undefined;
-  if (!envelope || typeof envelope !== "object" || !("structuredContent" in envelope)) {
+  if (!envelope || typeof envelope !== "object") {
     throw new InvalidExternalDataError(tool);
   }
+  // Whether a missing `structuredContent` is acceptable is the schema's
+  // decision, not this helper's: a write verified by a later readback does
+  // not need a body, while every read schema rejects `undefined` anyway.
   const parsed = schema.safeParse(envelope.structuredContent);
   if (!parsed.success) {
     throw new InvalidExternalDataError(tool, { cause: parsed.error });
