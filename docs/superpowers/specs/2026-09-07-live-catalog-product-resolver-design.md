@@ -42,6 +42,7 @@ Propose adding the following to Task 11's approved ownership before code work:
 | `src/features/shared/contracts.ts` | Add `getReplacements(context, slug): Promise<ProductCandidate[]>` to `SilpoGateway`. One method, no type change. |
 | `src/features/silpo/demo/demo-gateway.ts`, `.test.ts` | Implement `getReplacements` from the existing `similarProducts` fixture entries filtered to selectable products, and cover it. No fixture change. |
 | `src/features/products/category-queries.ts`, `.test.ts` | The `categoryKey → Ukrainian query` vocabulary and the tests that pin it to `categorize.ts` and to the demo fixture. |
+| `src/features/products/dietary.ts`, `.test.ts` | The `restrictionKey → exclusion pattern` vocabulary, kept out of the resolver so each file holds one responsibility. |
 | `docs/tasks.md`, `docs/agent-architecture.md` | Record the approved ownership and the resolved ranking, budget and enrichment policy in their owning documents. |
 
 No edit to `src/features/silpo/live/session.ts`, `src/features/silpo/oauth/*`, `src/features/purchases/*`, `src/features/prediction/*`, `src/lib/env.ts`, `src/db/schema.ts`, `vitest.config.ts`, `package.json`, `fixtures/demo/silpo-snapshot.json` or `SILPO_MCP.md` is required. Task 12 and Task 13 consume `resolveProducts` and the enlarged port, so review that handoff before approving the expansion.
@@ -95,7 +96,9 @@ The raw product schema parses `companyId` and `branchId` as nullable identifiers
 
 Mappers construct contract objects field by field. No raw payload is spread into a returned object.
 
-A product is **dropped at the mapping boundary** when its payload lacks `companyId` or `branchId`. Such a product could never be committed by Task 16, and `ProductCandidate` has nowhere to carry those IDs, so absence is enforced here rather than travelling into the domain as an unusable candidate.
+A product is **dropped at the mapping boundary** when it cannot be represented as a valid `ProductCandidate`: its payload lacks `companyId` or `branchId`, or the mapped object fails `ProductCandidateSchema` (a special price above the list price, for example). A product missing those IDs could never be committed by Task 16, and `ProductCandidate` has nowhere to carry them, so absence is enforced here rather than travelling into the domain as an unusable candidate. Dropping rather than throwing keeps one malformed row from failing an entire search; a malformed *envelope* still raises `InvalidExternalDataError` under L11-01.
+
+`getProductDetails` is the exception: it returns a single required object, so an unrepresentable product there raises `InvalidExternalDataError`. It is only ever called for a product that already passed this rule, so the case is genuinely anomalous — and L11-08 makes a details failure non-fatal anyway.
 
 Everything else is mapped faithfully, `available` and `stock` included. The gateway does not filter on availability, stock, service rows or dietary restrictions: those are domain policy and belong to the resolver, so that live and demo receive identical treatment from one implementation.
 
@@ -130,7 +133,7 @@ Per need, the pool is the union of that need's article hits and category hits, f
 2. selectable — `available === true`, `stock > 0`, and `stock >= step`, so at least one whole package can be bought;
 3. dietary-compatible against `customerContext.restrictionKeys`.
 
-Dietary compatibility is a hard exclusion, not a ranking key. When it empties a pool, the need is dropped; an incompatible product is never offered.
+Dietary compatibility is a hard exclusion, not a ranking key, and lives in `products/dietary.ts` as a `restrictionKey → exclusion pattern` table. When it empties a pool, the need is dropped; an incompatible product is never offered. A restriction key absent from the table excludes nothing and is not an error — guessing a meaning would be worse than ignoring one — and the vocabulary joins the schema field names as something to reconcile against a live `silpo_get_my_food_restrictions` once credentials exist.
 
 One fallback call per need, at most, when the filtered pool is empty or contains no familiar SKU:
 
@@ -169,7 +172,7 @@ Alternatives keep the nutrition status their search result carried. Nothing is e
 
 ### L11-08 — Error and degradation policy
 
-Search and promotions failures are fatal and propagate unchanged as `McpCallError`, `UnadvertisedToolError` or `InvalidExternalDataError` from Task 10's session. Task 11 introduces no new error type and no route, so the existing status mapping is untouched.
+A `findProducts` failure is fatal and propagates unchanged as `McpCallError`, `UnadvertisedToolError` or `InvalidExternalDataError` from Task 10's session. Task 11 introduces no new error type and no route, so the existing status mapping is untouched.
 
 A `getProductDetails` failure of any kind is **non-fatal**: the selected product keeps its search-result nutrition status and the run continues. Losing a nutrition label must not cost the user an otherwise valid draft. A fallback `getReplacements` or `getSimilarProducts` failure is likewise non-fatal and leaves the pool as it was, which may drop the need.
 
@@ -179,9 +182,9 @@ An unadvertised tool is rejected by the session before any network call, so a Si
 
 `products/resolve-products.ts` and `products/category-queries.ts` import only shared contracts, `features/purchases/categorize.ts`, and Zod. No React, Next.js, MCP SDK, AI SDK or database import appears in either file, and neither imports `schemas/catalog.ts` or `live/catalog.ts`.
 
-Per draft run the resolver issues at most one `findProducts` call with at most 30 queries, one `getPromotions` call, at most ten fallback calls, and at most ten `getProductDetails` calls.
+Per draft run the resolver issues at most one `findProducts` call with at most 30 queries, at most ten fallback calls, and at most ten `getProductDetails` calls.
 
-Branch-level promotions from `getPromotions` are mapped for Task 12 and Task 13 to consume. The resolver's discount signal comes from each candidate's own `specialPrice` and `promotions`; it does not associate a branch promotion with a product, because `Promotion` carries no product linkage and inventing one would fabricate a fact.
+The resolver does **not** call `getPromotions`. `Promotion` carries no product linkage, so a branch promotion cannot be attached to a candidate without inventing the association; the resolver's discount signal comes from each candidate's own `specialPrice` and `promotions` instead. `getPromotions` remains a gateway obligation because it is on the port and Task 12 and Task 13 consume it, and it is covered by the contract test rather than by a resolver call.
 
 ### L11-10 — Test evidence
 
@@ -202,7 +205,7 @@ Branch-level promotions from `getPromotions` are mapped for Task 12 and Task 13 
 | L11-05 | Article and category queries batched within 30; service rows, unselectable stock and restriction violations filtered; single bounded fallback; unresolvable need omitted | `resolve-products.test.ts` |
 | L11-06 | Familiar selectable SKU wins; documented sort chain applied in order; equal-budget order stable across runs; alternatives capped, unique and schema-valid | `resolve-products.test.ts` |
 | L11-07 | Details fetched once per resolved need; selected product's nutrition updated; alternatives untouched; nothing derived | `resolve-products.test.ts` |
-| L11-08 | Search and promotions failures propagate unchanged; details and fallback failures degrade without losing the draft; unadvertised tool rejected before the network | `silpo-catalog.test.ts`, `resolve-products.test.ts` |
+| L11-08 | A search failure propagates unchanged; details and fallback failures degrade without losing the draft; unadvertised tool rejected before the network | `silpo-catalog.test.ts`, `resolve-products.test.ts` |
 | L11-09 | Resolver imports stay pure; per-run call budget respected; no fabricated promotion-to-product linkage | `resolve-products.test.ts` |
 | L11-10 | Focused suites pass from a clean invocation alongside `pnpm typecheck` | `pnpm vitest run tests/contract/silpo-catalog.test.ts src/features/products/resolve-products.test.ts src/features/products/category-queries.test.ts` |
 
