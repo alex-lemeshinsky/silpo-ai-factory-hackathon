@@ -2,7 +2,9 @@ import { describe, expect, it, vi } from "vitest";
 import type { z } from "zod";
 
 import {
+  AddressChangeUnsupportedError,
   createLiveCartContextGateway,
+  DeliveryTypeUnavailableError,
   mapDeliveryType,
   NoSavedAddressError,
   SlotUnavailableError,
@@ -69,8 +71,8 @@ const cartWithSlot = {
     street: "Хрещатик",
     house: "1",
     district: null,
-    latitude: null,
-    longitude: null,
+    latitude: 50.45,
+    longitude: 30.52,
   },
   shipments: [{ id: "ship-1" }],
   total: 0,
@@ -296,48 +298,19 @@ describe("loadCartContext with no cart", () => {
 });
 
 describe("getTimeSlots", () => {
-  it("delegates to silpo_get_time_slots with delivery type mapping and returns domain TimeSlots", async () => {
+  it("uses the cart's real Silpo delivery type rather than reconstructing one", async () => {
+    // The domain contract collapses eight Silpo types into two, so a cart on
+    // WideAssortDelivery must not be queried as DeliveryHome.
+    let requested: Record<string, unknown> | undefined;
     const read = createFakeSession(READ_TOOLS, {
+      silpo_get_shopping_cart_by_id: () => ({
+        ...cartWithSlot,
+        deliveryType: "WideAssortDelivery",
+        branchId: "branch-42",
+      }),
       silpo_get_time_slots: (args) => {
-        expect(args).toEqual({ branchId: "branch-7", deliveryType: "DeliveryHome" });
+        requested = args;
         return { slots: [activeSlot] };
-      },
-    });
-    const write = createFakeSession(WRITE_TOOLS, {}, false);
-    const gateway = createLiveCartContextGateway({ readSession: read, writeSession: write, now: () => NOW });
-
-    const context: CartContext = {
-      cartId: "cart-1",
-      deliveryType: "delivery",
-      city: "Київ",
-      branchId: "branch-7",
-      slot: {
-        id: "slot-1",
-        startsAt: activeSlot.start,
-        endsAt: activeSlot.end,
-        available: true,
-      },
-    };
-
-    const slots = await gateway.getTimeSlots(context);
-
-    expect(slots).toEqual([
-      {
-        id: "slot-1",
-        startsAt: activeSlot.start,
-        endsAt: activeSlot.end,
-        available: true,
-      },
-    ]);
-    expect(read.calls).toEqual(["silpo_get_time_slots"]);
-  });
-
-  it("maps pickup delivery type to SelfPickup", async () => {
-    let requestedDeliveryType: unknown;
-    const read = createFakeSession(READ_TOOLS, {
-      silpo_get_time_slots: (args) => {
-        requestedDeliveryType = args.deliveryType;
-        return { slots: [] };
       },
     });
     const gateway = createLiveCartContextGateway({
@@ -348,6 +321,47 @@ describe("getTimeSlots", () => {
 
     const context: CartContext = {
       cartId: "cart-1",
+      deliveryType: "delivery",
+      city: "Київ",
+      branchId: "branch-42",
+      slot: {
+        id: "slot-1",
+        startsAt: activeSlot.start,
+        endsAt: activeSlot.end,
+        available: true,
+      },
+    };
+
+    const slots = await gateway.getTimeSlots(context);
+
+    expect(requested).toEqual({ branchId: "branch-42", deliveryType: "WideAssortDelivery" });
+    expect(slots).toEqual([
+      {
+        id: "slot-1",
+        startsAt: activeSlot.start,
+        endsAt: activeSlot.end,
+        available: true,
+      },
+    ]);
+  });
+
+  it("preserves a self-pickup cart's type", async () => {
+    let requested: unknown;
+    const read = createFakeSession(READ_TOOLS, {
+      silpo_get_shopping_cart_by_id: () => ({ ...cartWithSlot, deliveryType: "SelfPickup" }),
+      silpo_get_time_slots: (args) => {
+        requested = args.deliveryType;
+        return { slots: [] };
+      },
+    });
+    const gateway = createLiveCartContextGateway({
+      readSession: read,
+      writeSession: createFakeSession(WRITE_TOOLS, {}, false),
+      now: () => NOW,
+    });
+
+    await gateway.getTimeSlots({
+      cartId: "cart-1",
       deliveryType: "pickup",
       city: "Київ",
       branchId: "branch-7",
@@ -357,10 +371,9 @@ describe("getTimeSlots", () => {
         endsAt: activeSlot.end,
         available: true,
       },
-    };
+    });
 
-    await gateway.getTimeSlots(context);
-    expect(requestedDeliveryType).toBe("SelfPickup");
+    expect(requested).toBe("SelfPickup");
   });
 });
 
@@ -485,5 +498,172 @@ describe("updateCartContext", () => {
 
     expect(write.calls).toEqual(["silpo_update_shopping_cart"]);
     expect(write.retryEnabled).toBe(false);
+  });
+
+  it("accepts a write response that carries no cartId", async () => {
+    // The update is trusted only after the readback, so its response body
+    // must not be validated as if it were a freshly created cart.
+    const read = createFakeSession(READ_TOOLS, {
+      silpo_get_my_shopping_cart: () => ({ exists: true, cartId: "cart-1" }),
+      silpo_get_shopping_cart_by_id: () => ({
+        ...cartWithSlot,
+        timeslot: { id: chosenSlot.id, start: chosenSlot.start, end: chosenSlot.end },
+      }),
+      silpo_get_time_slots: () => ({ slots: [activeSlot, chosenSlot] }),
+    });
+    const write = createFakeSession(
+      WRITE_TOOLS,
+      { silpo_update_shopping_cart: () => ({ ok: true }) },
+      false,
+    );
+    const gateway = createLiveCartContextGateway({
+      readSession: read,
+      writeSession: write,
+      now: () => NOW,
+    });
+
+    const context = await gateway.updateCartContext(input);
+
+    expect(context.slot.id).toBe("slot-2");
+  });
+
+  describe("requested delivery type", () => {
+    const pickupSlot = {
+      id: "pickup-slot",
+      start: "2026-09-08T14:00:00Z",
+      end: "2026-09-08T16:00:00Z",
+      available: true,
+    };
+
+    function buildPickupGateway(deliveryTypes: { deliveryType: string; branchId: string | null }[]) {
+      const slotArgs: Record<string, unknown>[] = [];
+      const updateArgs: Record<string, unknown>[] = [];
+      let readbacks = 0;
+
+      const read = createFakeSession(READ_TOOLS, {
+        silpo_get_my_shopping_cart: () => ({ exists: true, cartId: "cart-1" }),
+        silpo_get_shopping_cart_by_id: () => {
+          readbacks += 1;
+          // Before the write the cart is a home delivery; afterwards the
+          // server reports the requested self-pickup.
+          return readbacks === 1
+            ? cartWithSlot
+            : {
+                ...cartWithSlot,
+                deliveryType: "SelfPickup",
+                timeslot: { id: pickupSlot.id, start: pickupSlot.start, end: pickupSlot.end },
+              };
+        },
+        silpo_get_available_delivery_types: () => ({ deliveryTypes }),
+        silpo_get_time_slots: (args) => {
+          slotArgs.push(args);
+          return { slots: [pickupSlot] };
+        },
+      });
+      const write = createFakeSession(
+        WRITE_TOOLS,
+        {
+          silpo_update_shopping_cart: (args) => {
+            updateArgs.push(args);
+            return { ok: true };
+          },
+        },
+        false,
+      );
+
+      return {
+        gateway: createLiveCartContextGateway({
+          readSession: read,
+          writeSession: write,
+          now: () => NOW,
+        }),
+        read,
+        write,
+        slotArgs,
+        updateArgs,
+      };
+    }
+
+    const pickupInput = {
+      deliveryType: "pickup" as const,
+      addressId: null,
+      branchId: "branch-7",
+      slotId: "pickup-slot",
+    };
+
+    it("resolves and applies a requested change from delivery to pickup", async () => {
+      const { gateway, slotArgs, updateArgs } = buildPickupGateway([
+        { deliveryType: "DeliveryHome", branchId: "branch-7" },
+        { deliveryType: "SelfPickup", branchId: "branch-9" },
+      ]);
+
+      const context = await gateway.updateCartContext(pickupInput);
+
+      // Slots are listed for the requested mode, not the cart's current one.
+      expect(slotArgs[0].deliveryType).toBe("SelfPickup");
+      // The write actually carries the new delivery type.
+      expect(updateArgs[0].deliveryType).toBe("SelfPickup");
+      expect(context.deliveryType).toBe("pickup");
+    });
+
+    it("rejects the request when no matching delivery type is available", async () => {
+      const { gateway, write } = buildPickupGateway([
+        { deliveryType: "DeliveryHome", branchId: "branch-7" },
+      ]);
+
+      await expect(gateway.updateCartContext(pickupInput)).rejects.toBeInstanceOf(
+        DeliveryTypeUnavailableError,
+      );
+      expect(write.calls).toEqual([]);
+    });
+
+    it("fails rather than returning a context that contradicts the request", async () => {
+      const read = createFakeSession(READ_TOOLS, {
+        silpo_get_my_shopping_cart: () => ({ exists: true, cartId: "cart-1" }),
+        // The server ignores the delivery-type change and keeps DeliveryHome.
+        silpo_get_shopping_cart_by_id: () => ({
+          ...cartWithSlot,
+          timeslot: { id: pickupSlot.id, start: pickupSlot.start, end: pickupSlot.end },
+        }),
+        silpo_get_available_delivery_types: () => ({
+          deliveryTypes: [{ deliveryType: "SelfPickup", branchId: "branch-9" }],
+        }),
+        silpo_get_time_slots: () => ({ slots: [pickupSlot] }),
+      });
+      const gateway = createLiveCartContextGateway({
+        readSession: read,
+        writeSession: createFakeSession(
+          WRITE_TOOLS,
+          { silpo_update_shopping_cart: () => ({ ok: true }) },
+          false,
+        ),
+        now: () => NOW,
+      });
+
+      await expect(gateway.updateCartContext(pickupInput)).rejects.toBeInstanceOf(
+        SlotVerificationError,
+      );
+    });
+
+    it("leaves an unchanged delivery type alone without extra lookups", async () => {
+      const { gateway, read } = buildGateway();
+
+      await gateway.updateCartContext(input);
+
+      expect(read.calls).not.toContain("silpo_get_available_delivery_types");
+    });
+  });
+
+  it("refuses an address change instead of silently ignoring it", async () => {
+    // The backlog mandates copying the cart's address verbatim, so an
+    // explicit address request cannot be honoured here — and must not be
+    // accepted and dropped.
+    const { gateway, write, read } = buildGateway();
+
+    await expect(
+      gateway.updateCartContext({ ...input, addressId: "addr-1" }),
+    ).rejects.toBeInstanceOf(AddressChangeUnsupportedError);
+    expect(write.calls).toEqual([]);
+    expect(read.calls).toEqual([]);
   });
 });

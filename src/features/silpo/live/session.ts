@@ -1,13 +1,18 @@
-import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
+import {
+  Client,
+  StreamableHTTPClientTransport,
+  UnauthorizedError,
+} from "@modelcontextprotocol/client";
 import type { z } from "zod";
 
 import {
   createHardenedFetch,
+  ReauthorizationRequired,
   SILPO_MCP_SERVER_URL,
   type SilpoOAuthProvider,
 } from "../oauth/transport";
 import { parseToolResult } from "../schemas/common";
-import { withBoundedRetry } from "./retry";
+import { isRetryableStatus, withBoundedRetry } from "./retry";
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
 const DEFAULT_OPERATION_TIMEOUT_MS = 30_000;
@@ -29,7 +34,10 @@ export class McpCallError extends Error {
     readonly retryAfterHeader: string | null,
     options?: { cause?: unknown },
   ) {
-    super(status === 429 ? "rate_limited" : "mcp_call_failed", options);
+    super(
+      status === 429 ? "rate_limited" : status === 401 ? "unauthorized" : "mcp_call_failed",
+      options,
+    );
     this.name = "McpCallError";
   }
 }
@@ -59,18 +67,36 @@ export interface OpenSessionOptions {
   sleep?: (ms: number) => Promise<void>;
 }
 
-function extractStatus(error: unknown): { status: number | null; retryAfterHeader: string | null } {
-  // The SDK surfaces HTTP failures as errors carrying the status in the
-  // message or on the error object, depending on where they originate.
+/**
+ * Recovers the HTTP status from an SDK failure.
+ *
+ * The SDK's `SdkHttpError` exposes `status`, `statusText` and `text` but not
+ * the response headers, so `Retry-After` cannot come from here. The session
+ * observes it at the fetch layer instead — see `observeRateLimit` below.
+ */
+function extractStatus(error: unknown): number | null {
+  // An exhausted refresh surfaces as UnauthorizedError (or, once the fetch's
+  // refresh budget is spent, ReauthorizationRequired). Neither carries a
+  // numeric status, so without this the caller could not tell "sign in again"
+  // apart from an unexplained failure.
+  if (
+    error instanceof UnauthorizedError ||
+    error instanceof ReauthorizationRequired ||
+    (error instanceof Error &&
+      (error.name === "UnauthorizedError" || error.name === "ReauthorizationRequired"))
+  ) {
+    return 401;
+  }
+
   const candidate = error as { status?: unknown; code?: unknown; message?: unknown };
   for (const value of [candidate?.status, candidate?.code]) {
     if (typeof value === "number" && value >= 100 && value < 600) {
-      return { status: value, retryAfterHeader: null };
+      return value;
     }
   }
   const message = typeof candidate?.message === "string" ? candidate.message : String(error);
   const match = message.match(/\b(4\d{2}|5\d{2})\b/);
-  return { status: match ? Number(match[1]) : null, retryAfterHeader: null };
+  return match ? Number(match[1]) : null;
 }
 
 async function openSession(
@@ -105,9 +131,21 @@ async function openSession(
     refreshBudget: policy.refreshBudget,
   });
 
+  // The SDK drops response headers before an error reaches the caller, so the
+  // rate-limit hint is captured here, where the raw Response still exists.
+  let observedRetryAfter: string | null = null;
+  const observingFetch: typeof fetch = async (input, init) => {
+    const response = await hardenedFetch(input, init);
+    if (isRetryableStatus(response.status)) {
+      const header = response.headers.get("Retry-After");
+      observedRetryAfter = header !== null && header.trim().length > 0 ? header : null;
+    }
+    return response;
+  };
+
   const transport = new StreamableHTTPClientTransport(serverUrl, {
     authProvider: options.provider,
-    fetch: hardenedFetch,
+    fetch: observingFetch,
     reconnectionOptions: {
       maxRetries: 0,
       initialReconnectionDelay: 1000,
@@ -150,13 +188,17 @@ async function openSession(
       }
 
       const invoke = async () => {
+        // Cleared per attempt so a hint from an earlier call is never reused.
+        observedRetryAfter = null;
         let result;
         try {
           result = await client.callTool({ name, arguments: args });
         } catch (error) {
           // Transport and HTTP failures only. A schema failure below is a
           // different category and must not be reported as a call failure.
-          const { status, retryAfterHeader } = extractStatus(error);
+          const status = extractStatus(error);
+          const retryAfterHeader =
+            status !== null && isRetryableStatus(status) ? observedRetryAfter : null;
           throw new McpCallError(name, status, retryAfterHeader, { cause: error });
         }
         if (result.isError) {
@@ -176,7 +218,10 @@ async function openSession(
         now,
         sleep: options.sleep,
         classify: (error) => ({
-          retryable: error instanceof McpCallError && error.status === 429,
+          retryable:
+            error instanceof McpCallError &&
+            error.status !== null &&
+            isRetryableStatus(error.status),
           retryAfterHeader:
             error instanceof McpCallError ? error.retryAfterHeader : null,
         }),

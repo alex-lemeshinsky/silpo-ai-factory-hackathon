@@ -91,6 +91,10 @@ Alternatives considered:
 
 `openWriteSession` sets a refresh budget of zero, disables fetch-level retry, has no retry wrapper, and disables transport auto-reconnection. A `401` on a write returns control immediately without a refresh attempt and without replaying the mutation.
 
+A `401` that survives the session's single refresh reaches the caller as `UnauthorizedError`, which carries no numeric status. The session classifies it as `401` so the route can require reauthorization; left unclassified it would be reported as an unexplained server error, and the "then require reauthorization" half of the rule would never be observable to the guest.
+
+The SDK's `SdkHttpError` carries `status`, `statusText` and `text` but not the response headers, so `Retry-After` cannot be recovered from the error. The read session observes it at the fetch layer, where the raw `Response` still exists, and attaches it to the `McpCallError` for that attempt. Without this the "use server metadata when present" branch is unreachable and every wait silently falls back to the local ladder.
+
 `live/retry.ts` is a pure module: `RETRY_ATTEMPT_LIMIT`, `computeRetryDelayMs(attempt, retryAfterHeader, remainingDeadlineMs)`, a `isRetryableStatus` classifier, and `withBoundedRetry(operation, policy)`. The existing `429` loop in `transport.ts` calls `computeRetryDelayMs` so the delay ladder is defined exactly once in the repository. This makes `oauth/transport.ts` import from `live/retry.ts`; the direction is acceptable because `retry.ts` is pure and depends on no session, transport, or MCP type.
 
 Only `silpo_create_shopping_cart` and `silpo_update_shopping_cart` use the write session. Every other Task 10 call uses the read session.
@@ -131,7 +135,20 @@ Silpo delivery types map to the contract's two values: `SelfPickup` maps to `pic
 
 ### L10-05 — Slot selection and verified readback
 
-`updateCartContext(input)` validates `input` against `UpdateCartContextInputSchema`, reads the cart, and confirms the requested `slotId` is present and available in the current slot list. It copies address and shipments verbatim from that readback into `silpo_update_shopping_cart`, then immediately re-reads the cart and verifies the returned slot equals the requested slot. A mismatch is a typed failure, not a returned context. The returned value parses cleanly as `CartContext`, which by its own refinement requires an available slot.
+`updateCartContext(input)` validates `input` against `UpdateCartContextInputSchema`, reads the cart, resolves the delivery type to apply, and confirms the requested `slotId` is present and available in the slot list **for that delivery type**. It copies address and shipments verbatim from the readback into `silpo_update_shopping_cart`, then immediately re-reads the cart and verifies both the slot and the delivery mode. A mismatch on either is a typed failure, not a returned context. The returned value parses cleanly as `CartContext`, which by its own refinement requires an available slot.
+
+Every field of the input is either honoured or refused; none is accepted and dropped:
+
+| Field | Behaviour |
+|---|---|
+| `slotId` | Applied and verified against the readback. |
+| `deliveryType` | When it already matches the cart, the cart's exact Silpo type is kept — the domain enum has two values where Silpo documents eight, so it must never be reconstructed. When it differs, the type is resolved from `silpo_get_available_delivery_types` at the cart's coordinates; no match, or no coordinates, is `DeliveryTypeUnavailableError`. |
+| `branchId` | Applied when present, otherwise the cart's. |
+| `addressId` | Refused with `AddressChangeUnsupportedError`. The backlog requires the address to be copied verbatim from the readback, so this task cannot honour an address change — and says so rather than ignoring the field. |
+
+The write's own response body is **not** shape-validated: the readback is the proof the write landed, so validating the acknowledgement would turn a successful cart write into a false failure. `AcknowledgedWriteSchema` exists for exactly this.
+
+`getTimeSlots(context)` re-reads the cart for the same reason `deliveryType` is not reconstructed: `CartContext` cannot round-trip the Silpo type, so a cart on `WideAssortDelivery` must not be queried as `DeliveryHome`.
 
 ### L10-06 — History reads and mapping
 
@@ -161,7 +178,9 @@ Status mapping:
 |---|---|---|
 | Verified context returned | 200 | `{ mode, context }` |
 | Requested slot unavailable or expired | 409 | `AppError` with code `needs_slot` |
-| No or invalid session | 401 | `AppError` with code `unauthorized` |
+| Requested delivery type unavailable, or readback contradicts the write | 409 | `AppError` with code `cart_validation_error` |
+| Address change requested | 400 | `AppError` with code `unexpected` |
+| No or invalid session, or Silpo rejects the token after its one refresh | 401 | `AppError` with code `unauthorized` |
 | Rate limited after retry exhaustion | 429 | `AppError` with `retryAfterMs` |
 | MCP response failed validation | 502 | `AppError` with code `invalid_external_data` |
 | Anything else | 500 | `AppError` with code `unexpected` and a correlation ID |
@@ -179,10 +198,10 @@ Fetch-level fixtures drive the real `Client` and hardened fetch to pin: `429` re
 | ID | Required evidence | Primary test location |
 |---|---|---|
 | L10-01 | Hardened fetch extraction preserves Task 9 behavior; session calls `tools/list` first; unadvertised tool rejected without a network call | `transport.test.ts`, `session.test.ts` |
-| L10-02 | Read session retries a `429` three times; write session attempts a write exactly once; `401` triggers exactly one refresh on read and none on write; delay ladder defined once | `session.test.ts`, `silpo-cart-context.test.ts` |
+| L10-02 | Read session retries a `429` three times; write session attempts a write exactly once; server `Retry-After` honoured and surfaced as `retryAfterMs`; `401` triggers exactly one refresh on read and none on write, proved against the real provider; delay ladder defined once | `session.test.ts`, `silpo-cart-context.test.ts` |
 | L10-03 | Unknown external fields tolerated; missing or mistyped required field rejected as `invalid_external_data`; no guessed shape proceeds | `silpo-cart-context.test.ts`, `silpo-history.test.ts` |
 | L10-04 | Documented bootstrap order for both branches; expired slot yields `needs_slot` and blocks cart-dependent reads; missing address is a typed error; delivery-type mapping | `silpo-cart-context.test.ts` |
-| L10-05 | Address and shipments copied verbatim; immediate readback; slot mismatch fails rather than returning a context | `silpo-cart-context.test.ts` |
+| L10-05 | Address and shipments copied verbatim; delivery type honoured or refused, never dropped; slots listed for the applied type; immediate readback; slot or delivery-mode mismatch fails rather than returning a context; write acknowledgement not shape-validated | `silpo-cart-context.test.ts` |
 | L10-06 | `lagerId` to `externalProductId`; ISO UTC preserved; bounded request parameter; no client-side windowing, filtering or deduplication; all-unmappable receipt dropped | `silpo-history.test.ts` |
 | L10-07 | No phone, email, address, barcode, DOB or profile ID appears in any returned value | `silpo-history.test.ts` |
 | L10-08 | Session ownership enforced; body validation; demo parity; full status mapping; no leaked provider text | `silpo-cart-context.test.ts` |
