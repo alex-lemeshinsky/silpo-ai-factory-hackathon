@@ -7,6 +7,7 @@ import {
   UnauthorizedError,
 } from "@modelcontextprotocol/client";
 
+import { computeRetryDelayMs } from "../live/retry";
 import type { createSilpoOAuthProvider } from "./provider";
 
 export type SilpoOAuthProvider = Awaited<ReturnType<typeof createSilpoOAuthProvider>>;
@@ -34,6 +35,27 @@ export interface CreateSilpoOAuthConnectionOptions {
   requestTimeoutMs?: number;
   operationTimeoutMs?: number;
   allowInsecureDevHttp?: boolean;
+}
+
+export interface HardenedFetchOptions {
+  serverUrl: URL;
+  provider: SilpoOAuthProvider;
+  /** Underlying fetch. Injectable for synthetic-network tests. */
+  fetch: typeof fetch;
+  lookupIp: (hostname: string) => Promise<string[]>;
+  requestTimeoutMs: number;
+  /** Absolute epoch-ms deadline shared by every request on this connection. */
+  operationDeadline: number;
+  abortSignal: AbortSignal;
+  allowInsecureDevHttp: boolean;
+  /**
+   * Fetch-level 429 retry. True for the OAuth flow, whose requests are all
+   * genuinely read-only. False for live sessions, where read/write is only
+   * visible one layer up and retry belongs at the callTool layer.
+   */
+  retryOn429: boolean;
+  /** 1 for read and OAuth flows, 0 for the bearer-only write session. */
+  refreshBudget: number;
 }
 
 /** Documented official Silpo MCP endpoint (SILPO_MCP.md). */
@@ -178,48 +200,11 @@ export function sanitizeAuthorizationHeader(
   }
 }
 
-export function createSilpoOAuthConnection(
-  provider: SilpoOAuthProvider,
-  options: CreateSilpoOAuthConnectionOptions = {},
-): OAuthConnection {
-  const serverUrl = new URL(options.serverUrl ?? DEFAULT_SERVER_URL);
-  const underlyingFetch = options.fetch ?? globalThis.fetch;
-  const lookupIp = options.lookupIp ?? defaultLookupIp;
-  const requestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
-  const operationTimeoutMs = options.operationTimeoutMs ?? DEFAULT_OPERATION_TIMEOUT_MS;
-  const allowInsecureDevHttp = options.allowInsecureDevHttp ?? false;
+export function createHardenedFetch(options: HardenedFetchOptions): typeof fetch {
+  let refreshAttempts = 0;
+  let codeExchanges = 0;
 
-  // Immediate synchronous destination check for serverUrl scheme and IP literal
-  if (serverUrl.protocol !== "https:") {
-    if (
-      !allowInsecureDevHttp ||
-      serverUrl.protocol !== "http:" ||
-      (serverUrl.hostname !== "localhost" && serverUrl.hostname !== "127.0.0.1")
-    ) {
-      throw new Error("insecure_protocol");
-    }
-  }
-  if (isPrivateOrLoopbackIp(serverUrl.hostname)) {
-    throw new Error("insecure_destination_ip");
-  }
-
-  // Budget tracking across the connection
-  const budget = {
-    refreshAttempts: 0,
-    codeExchanges: 0,
-  };
-
-  const connectionAbortController = new AbortController();
-  const operationDeadline = Date.now() + operationTimeoutMs;
-  const operationTimeoutId = setTimeout(() => {
-    connectionAbortController.abort(new Error("operation_timed_out"));
-  }, operationTimeoutMs);
-
-  let activeClient: Client | null = null;
-  let activeTransport: StreamableHTTPClientTransport | null = null;
-
-  // Create bound fetch with destination validation, budget guarding, 429 retries, and timeouts
-  const boundFetch: typeof fetch = async (input, init) => {
+  return async (input, init) => {
     let currentUrl = new URL(
       typeof input === "string"
         ? input
@@ -233,7 +218,7 @@ export function createSilpoOAuthConnection(
     const MAX_REDIRECTS = 5;
 
     while (redirectCount <= MAX_REDIRECTS) {
-      await validateDestination(currentUrl, lookupIp, allowInsecureDevHttp);
+      await validateDestination(currentUrl, options.lookupIp, options.allowInsecureDevHttp);
 
       const method = (
         currentInit.method ?? (input instanceof Request ? input.method : "GET")
@@ -282,36 +267,36 @@ export function createSilpoOAuthConnection(
       }
 
       if (isRefreshGrant) {
-        if (budget.refreshAttempts >= 1) {
+        if (refreshAttempts >= options.refreshBudget) {
           throw new ReauthorizationRequired();
         }
-        budget.refreshAttempts += 1;
-        provider.setGrantKind("refresh_token");
+        refreshAttempts += 1;
+        options.provider.setGrantKind("refresh_token");
       }
 
       if (isCodeExchange) {
-        if (budget.codeExchanges >= 1) {
+        if (codeExchanges >= 1) {
           throw new ReauthorizationRequired();
         }
-        budget.codeExchanges += 1;
-        provider.setGrantKind("authorization_code");
+        codeExchanges += 1;
+        options.provider.setGrantKind("authorization_code");
       }
 
       sanitizeAuthorizationHeader(currentUrl, headers, isTokenRequest);
 
       // Timeouts
       const requestAbort = new AbortController();
-      const timeoutId = setTimeout(() => requestAbort.abort(), requestTimeoutMs);
+      const timeoutId = setTimeout(() => requestAbort.abort(), options.requestTimeoutMs);
 
       const onConnectionAbort = () => requestAbort.abort();
-      connectionAbortController.signal.addEventListener("abort", onConnectionAbort, {
+      options.abortSignal.addEventListener("abort", onConnectionAbort, {
         once: true,
       });
 
       let response: Response;
       try {
         const executeFetch = async () => {
-          return await underlyingFetch(currentUrl.toString(), {
+          return await options.fetch(currentUrl.toString(), {
             ...currentInit,
             headers,
             signal: requestAbort.signal,
@@ -323,34 +308,29 @@ export function createSilpoOAuthConnection(
 
         // 429 Handling: Retry read-only MCP operations at most three times
         const isMcpReadOnly =
-          currentUrl.pathname === serverUrl.pathname && !isTokenRequest;
+          currentUrl.pathname === options.serverUrl.pathname && !isTokenRequest;
 
-        if (response.status === 429 && isMcpReadOnly) {
+        if (options.retryOn429 && response.status === 429 && isMcpReadOnly) {
           let retryCount = 0;
           while (response.status === 429 && retryCount < 3) {
             retryCount += 1;
-            const retryAfterHeader = response.headers.get("Retry-After");
-            let delayMs = 250 * Math.pow(2, retryCount - 1) + Math.random() * 50;
-            if (retryAfterHeader) {
-              const seconds = Number.parseInt(retryAfterHeader, 10);
-              if (!Number.isNaN(seconds) && seconds >= 0) {
-                delayMs = seconds * 1000;
-              }
-            }
-            // Provider-supplied delays never extend the operation deadline:
-            // a wait that cannot fit ends the retry loop instead.
-            if (delayMs > operationDeadline - Date.now()) {
+            const delay = computeRetryDelayMs({
+              attempt: retryCount,
+              retryAfterHeader: response.headers.get("Retry-After"),
+              remainingDeadlineMs: options.operationDeadline - Date.now(),
+            });
+            if (delay === null) {
               break;
             }
-            if (delayMs > 0) {
-              await abortableDelay(delayMs, connectionAbortController.signal);
+            if (delay > 0) {
+              await abortableDelay(delay, options.abortSignal);
             }
             response = await executeFetch();
           }
         }
       } finally {
         clearTimeout(timeoutId);
-        connectionAbortController.signal.removeEventListener(
+        options.abortSignal.removeEventListener(
           "abort",
           onConnectionAbort,
         );
@@ -408,6 +388,54 @@ export function createSilpoOAuthConnection(
 
     throw new Error("too_many_redirects");
   };
+}
+
+export function createSilpoOAuthConnection(
+  provider: SilpoOAuthProvider,
+  options: CreateSilpoOAuthConnectionOptions = {},
+): OAuthConnection {
+  const serverUrl = new URL(options.serverUrl ?? DEFAULT_SERVER_URL);
+  const underlyingFetch = options.fetch ?? globalThis.fetch;
+  const lookupIp = options.lookupIp ?? defaultLookupIp;
+  const requestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
+  const operationTimeoutMs = options.operationTimeoutMs ?? DEFAULT_OPERATION_TIMEOUT_MS;
+  const allowInsecureDevHttp = options.allowInsecureDevHttp ?? false;
+
+  // Immediate synchronous destination check for serverUrl scheme and IP literal
+  if (serverUrl.protocol !== "https:") {
+    if (
+      !allowInsecureDevHttp ||
+      serverUrl.protocol !== "http:" ||
+      (serverUrl.hostname !== "localhost" && serverUrl.hostname !== "127.0.0.1")
+    ) {
+      throw new Error("insecure_protocol");
+    }
+  }
+  if (isPrivateOrLoopbackIp(serverUrl.hostname)) {
+    throw new Error("insecure_destination_ip");
+  }
+
+  const connectionAbortController = new AbortController();
+  const operationDeadline = Date.now() + operationTimeoutMs;
+  const operationTimeoutId = setTimeout(() => {
+    connectionAbortController.abort(new Error("operation_timed_out"));
+  }, operationTimeoutMs);
+
+  let activeClient: Client | null = null;
+  let activeTransport: StreamableHTTPClientTransport | null = null;
+
+  const boundFetch = createHardenedFetch({
+    serverUrl,
+    provider,
+    fetch: underlyingFetch,
+    lookupIp,
+    requestTimeoutMs,
+    operationDeadline,
+    abortSignal: connectionAbortController.signal,
+    allowInsecureDevHttp,
+    retryOn429: true,
+    refreshBudget: 1,
+  });
 
   const connection: OAuthConnection = {
     async begin(): Promise<"authorized" | "redirect"> {

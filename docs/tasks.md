@@ -691,6 +691,12 @@ been executed; the read-only live OAuth smoke has not been performed either. Bot
 - Create: `src/features/silpo/live/cart-context.ts`
 - Create: `src/features/silpo/live/retry.ts`
 - Create: `src/app/api/cart/context/route.ts`
+- Create: `src/features/silpo/live/session.ts` (controller-approved addition)
+- Test: `src/features/silpo/live/session.test.ts` (controller-approved addition)
+- Test: `src/features/silpo/live/retry.test.ts` (controller-approved addition)
+- Test: `src/features/silpo/schemas/cart.test.ts` (controller-approved addition)
+- Test: `src/app/api/cart/context/route.test.ts` (controller-approved addition)
+- Modify: `src/features/silpo/oauth/transport.ts` (controller-approved: extract `createHardenedFetch`)
 - Test: `tests/contract/silpo-history.test.ts`
 - Test: `tests/contract/silpo-cart-context.test.ts`
 
@@ -698,16 +704,16 @@ been executed; the read-only live OAuth smoke has not been performed either. Bot
 - Consumes: OAuth provider; shared contracts.
 - Produces: `LiveHistoryGateway`, `LiveCartContextGateway`.
 
-- [ ] **Step 1: Write fixture-driven contract tests**
+- [x] **Step 1: Write fixture-driven contract tests**
 
 Cover `tools/list`, family, restrictions, loyalty, online orders, offline orders, active cart, expired slot, no cart, available delivery types, cart creation, selected-slot updates, immediate readback validation, `429` retry exhaustion, and the rule that writes are never retried automatically.
 
-- [ ] **Step 2: Confirm failure**
+- [x] **Step 2: Confirm failure**
 
 Run: `pnpm vitest run tests/contract/silpo-history.test.ts tests/contract/silpo-cart-context.test.ts`
 Expected: FAIL because schemas and gateways do not exist.
 
-- [ ] **Step 3: Implement cart bootstrap**
+- [x] **Step 3: Implement cart bootstrap**
 
 The exact sequence is:
 
@@ -723,15 +729,15 @@ An expired slot returns `{ status: "needs_slot", availableSlots }`; do not conti
 
 `POST /api/cart/context` accepts a selected available slot, copies the current address and shipments exactly from the cart readback, calls `silpo_update_shopping_cart`, then immediately reads the cart and validates the new slot. It returns the verified `CartContext`.
 
-- [ ] **Step 4: Implement history reads and mapping**
+- [x] **Step 4: Implement history reads and mapping**
 
 Use the verified cart context for offline orders. Map `lagerId` to `externalProductId`. Convert online UTC timestamps before display but preserve ISO UTC internally. Do not store phone, address, loyalty barcode, or full profile.
 
-- [ ] **Step 5: Implement bounded retry behavior**
+- [x] **Step 5: Implement bounded retry behavior**
 
 Retry read-only calls after `429` at most three times using server-provided retry metadata when present, otherwise delays of 250 ms, 500 ms, and 1,000 ms plus jitter. Do not automatically retry cart writes. Delegate `401` to the OAuth provider for one refresh attempt.
 
-- [ ] **Step 6: Verify and commit**
+- [x] **Step 6: Verify and commit**
 
 Run: `pnpm vitest run tests/contract/silpo-history.test.ts tests/contract/silpo-cart-context.test.ts && pnpm typecheck`
 Expected: PASS.
@@ -740,6 +746,8 @@ Expected: PASS.
 git add src/features/silpo/schemas src/features/silpo/live/history.ts src/features/silpo/live/cart-context.ts src/features/silpo/live/retry.ts src/app/api/cart/context tests/contract
 git commit -m "feat: read live Silpo purchase context"
 ```
+
+Виконано 2026-09-07. Специфікація: [design](./superpowers/specs/2026-09-07-live-history-cart-context-design.md). Read-only live smoke не виконано — немає облікових даних.
 
 ---
 
