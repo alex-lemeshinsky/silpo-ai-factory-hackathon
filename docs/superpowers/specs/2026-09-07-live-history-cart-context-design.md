@@ -22,6 +22,7 @@ Inspected commit: `9f66aa587bfba46d0db143a0a37c6ace1cb78ea0`. The existing `.git
 | The hardened `boundFetch` inside `transport.ts` is private and owns destination validation, manual redirect handling with credential stripping, the refresh budget, and deadlines | Re-implementing it inside `live/` would create a second way to do a standardized thing. It must be extracted and shared. |
 | `boundFetch` retries any `429` whose path equals the MCP endpoint path (`isMcpReadOnly = currentUrl.pathname === serverUrl.pathname && !isTokenRequest`) | At the HTTP layer a read `tools/call` and a cart-write `tools/call` are both `POST /mcp`. That retry cannot distinguish them, so it would automatically retry a cart write. Retry discrimination must move to the tool-call layer. |
 | `resolveSilpoSession(handle)` returns `{ userId, expiresAt }` for an authenticated cookie | The route and gateways obtain identity through this resolver; they never accept a caller-supplied user ID. |
+| `normalizePurchases(receipts, activeCity, cutoff)` already applies the 180-day window, filters service rows via `isServiceItem`, and deduplicates online/offline receipts | The gateway must not repeat any of it. Task 10 returns faithful `RawPurchaseReceipt[]`; windowing, service-row exclusion and deduplication stay in `features/purchases`. |
 | `createDemoSilpoGateway()` implements `loadCartContext` and `updateCartContext` | Demo mode drives the demo gateway through the same route, preserving live/demo parity and the demo label. |
 | `tests/contract/` does not exist; `vitest.config.ts` excludes only e2e and the Postgres gate | Contract tests run in the ordinary `pnpm test` sweep with no config change. |
 | Architecture §9 assigns the bearer-only write transport to Task 16 | Task 10 is the first task that performs a cart write, so it introduces that transport. The owning document is updated in the same commit. |
@@ -73,7 +74,7 @@ Alternatives considered:
 - Never persist, log, or return phone, email, precise address, loyalty barcode, profile IDs, full profile fields, or raw MCP payloads.
 - Runtime-validate every MCP response before use; never proceed on a guessed shape.
 - Live mode never silently falls back to demo mode; demo mode stays visibly labeled.
-- History covers at most 180 days.
+- Bound the history *request* to roughly 180 days where `tools/list` advertises a date parameter. Do not filter, window, or deduplicate client-side: `normalizePurchases` owns that and already does it.
 - Finish implementation in one focused commit: `feat: read live Silpo purchase context`.
 
 ## 6. Requirements
@@ -136,7 +137,11 @@ Silpo delivery types map to the contract's two values: `SelfPickup` maps to `pic
 
 `createLiveHistoryGateway({ readSession, now })` exposes `loadPurchaseHistory(context)` and `loadCustomerContext()`.
 
-`loadPurchaseHistory(context)` requires a verified `CartContext`, reads online and offline orders, keeps only receipts inside a 180-day window ending at `now`, maps `lagerId` to `externalProductId`, excludes service rows such as bags, delivery fees and acceleration fees, and returns `RawPurchaseReceipt[]`. Timestamps are stored and returned as ISO UTC; conversion to local time is a presentation concern and does not happen here. Offline orders use the verified cart context.
+`loadPurchaseHistory(context)` requires a verified `CartContext`, reads online and offline orders, maps `lagerId` to `externalProductId`, and returns faithful `RawPurchaseReceipt[]`. Offline orders use the verified cart context. Timestamps are returned as ISO UTC; conversion to local time is a presentation concern and does not happen here.
+
+The gateway does **not** window, filter service rows, or deduplicate. `normalizePurchases` already owns all three, and repeating them here would create a second implementation that can drift. Where `tools/list` advertises a date-range parameter, pass one covering roughly 180 days so the request itself is bounded — that is a fetch parameter, not a domain filter.
+
+A receipt whose items all fail to map is dropped, because `RawPurchaseReceiptSchema` requires at least one item and the gateway will not emit an invalid contract object.
 
 ### L10-07 — Privacy boundary
 
@@ -178,7 +183,7 @@ Fetch-level fixtures drive the real `Client` and hardened fetch to pin: `429` re
 | L10-03 | Unknown external fields tolerated; missing or mistyped required field rejected as `invalid_external_data`; no guessed shape proceeds | `silpo-cart-context.test.ts`, `silpo-history.test.ts` |
 | L10-04 | Documented bootstrap order for both branches; expired slot yields `needs_slot` and blocks cart-dependent reads; missing address is a typed error; delivery-type mapping | `silpo-cart-context.test.ts` |
 | L10-05 | Address and shipments copied verbatim; immediate readback; slot mismatch fails rather than returning a context | `silpo-cart-context.test.ts` |
-| L10-06 | 180-day window; `lagerId` to `externalProductId`; service rows excluded; ISO UTC preserved | `silpo-history.test.ts` |
+| L10-06 | `lagerId` to `externalProductId`; ISO UTC preserved; bounded request parameter; no client-side windowing, filtering or deduplication; all-unmappable receipt dropped | `silpo-history.test.ts` |
 | L10-07 | No phone, email, address, barcode, DOB or profile ID appears in any returned value | `silpo-history.test.ts` |
 | L10-08 | Session ownership enforced; body validation; demo parity; full status mapping; no leaked provider text | `silpo-cart-context.test.ts` |
 | L10-09 | Focused contract suites pass from a clean invocation alongside `pnpm typecheck` | `pnpm vitest run tests/contract/silpo-history.test.ts tests/contract/silpo-cart-context.test.ts` |
