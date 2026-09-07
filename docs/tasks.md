@@ -757,31 +757,38 @@ git commit -m "feat: read live Silpo purchase context"
 - Create: `src/features/silpo/schemas/catalog.ts`
 - Create: `src/features/silpo/live/catalog.ts`
 - Create: `src/features/products/resolve-products.ts`
+- Create: `src/features/products/category-queries.ts` (controller-approved addition)
+- Create: `src/features/products/dietary.ts` (controller-approved addition)
+- Modify: `src/features/shared/contracts.ts` (controller-approved: add `getReplacements` to `SilpoGateway`)
+- Modify: `src/features/silpo/demo/demo-gateway.ts` (controller-approved: implement `getReplacements`)
 - Test: `tests/contract/silpo-catalog.test.ts`
 - Test: `src/features/products/resolve-products.test.ts`
+- Test: `src/features/products/category-queries.test.ts` (controller-approved addition)
+- Test: `src/features/products/dietary.test.ts` (controller-approved addition)
+- Test: `src/features/silpo/demo/demo-gateway.test.ts` (controller-approved addition)
 
 **Interfaces:**
 - Consumes: `NeedCandidate[]`, verified `CartContext`.
 - Produces: `resolveProducts(needs, context, gateway): ResolvedNeed[]`.
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
 
 Test exact numeric article search first, unavailable exact SKU fallback, stock filtering, package step, promotions, same-budget sorting, missing nutrition attributes, and plastic-bag exclusion.
 
-- [ ] **Step 2: Confirm failure**
+- [x] **Step 2: Confirm failure**
 
 Run: `pnpm vitest run tests/contract/silpo-catalog.test.ts src/features/products/resolve-products.test.ts`
 Expected: FAIL.
 
-- [ ] **Step 3: Implement catalog schemas and gateway**
+- [x] **Step 3: Implement catalog schemas and gateway**
 
 Map `find_products_batch`, `get_promotions`, `get_product_details`, `get_similar_products`, and `get_replacements`. A product is selectable only when `available=true`, `stock>0`, and both company and branch IDs exist.
 
-- [ ] **Step 4: Implement resolver policy**
+- [x] **Step 4: Implement resolver policy**
 
 Rank exact familiar SKU first. Otherwise rank alternatives by dietary compatibility, within-budget price, active discount, and package-size distance. Return explicit `nutritionStatus: "known" | "insufficient"`; never derive missing nutrients.
 
-- [ ] **Step 5: Verify and commit**
+- [x] **Step 5: Verify and commit**
 
 Run: `pnpm vitest run tests/contract/silpo-catalog.test.ts src/features/products/resolve-products.test.ts && pnpm typecheck`
 Expected: PASS.
@@ -790,6 +797,8 @@ Expected: PASS.
 git add src/features/silpo/schemas/catalog.ts src/features/silpo/live/catalog.ts src/features/products tests/contract/silpo-catalog.test.ts
 git commit -m "feat: resolve live product candidates"
 ```
+
+Виконано 2026-09-07. Специфікація: [design](./superpowers/specs/2026-09-07-live-catalog-product-resolver-design.md). Read-only live smoke не виконано — немає облікових даних.
 
 ---
 

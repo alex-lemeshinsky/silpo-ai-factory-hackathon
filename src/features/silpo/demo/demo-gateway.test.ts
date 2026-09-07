@@ -132,3 +132,24 @@ it("does not reflect unknown identifiers in adapter errors", async () => {
   await expect(gateway.readCart("private-cart-id"))
     .rejects.toThrowError(new Error("Unknown demo cart"));
 });
+
+it("offers replacements drawn from selectable similar products", async () => {
+  const gateway = createDemoSilpoGateway();
+  const cart = await loadReadyCart();
+
+  const replacements = await gateway.getReplacements(cart, "demo-water-still-15l");
+
+  expect(replacements.length).toBeGreaterThan(0);
+  for (const product of replacements) {
+    expect(product.available).toBe(true);
+    expect(product.stock).toBeGreaterThan(0);
+  }
+});
+
+it("returns no replacements for an unknown slug", async () => {
+  const gateway = createDemoSilpoGateway();
+  const cart = await loadReadyCart();
+
+  expect(await gateway.getReplacements(cart, "demo-unknown-slug")).toEqual([]);
+});
+

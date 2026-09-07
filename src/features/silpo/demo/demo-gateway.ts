@@ -158,6 +158,18 @@ export function createDemoSilpoGateway(): SilpoGateway {
       return clone(entry?.products ?? []);
     },
 
+    async getReplacements(context, slug) {
+      assertKnownContext(context);
+      const parsedSlug = nonEmptyString.parse(slug);
+      const entry = snapshot.similarProducts.find((candidate) => candidate.slug === parsedSlug);
+      // A replacement stands in for something unavailable, so only a product
+      // that can actually be bought right now qualifies.
+      const selectable = (entry?.products ?? []).filter(
+        (product) => product.available && product.stock > 0,
+      );
+      return clone(selectable);
+    },
+
     async getTimeSlots(context) {
       assertKnownContext(context);
       return clone(snapshot.timeSlots);

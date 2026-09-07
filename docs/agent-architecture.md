@@ -66,7 +66,7 @@ Facts and constraints → deterministic decision support → Gemini wording/rank
 
 ### `ProductResolver`
 
-Шукає exact familiar SKU, перевіряє branch availability і будує дозволений список alternatives. Ranking policy до Gemini: dietary compatibility → within-budget price → active discount → package-size distance.
+Шукає exact familiar SKU за артикулом, перевіряє branch availability і будує дозволений список alternatives. Дієтична сумісність є жорстким фільтром, а не ranking-ключем: товар, що порушує обмеження, не пропонується взагалі. Далі ranking policy до Gemini: ціна в межах звичної → активна знижка → відстань за розміром паковання → ціна → `productId` для детермінованого порядку. Орієнтир ціни й паковання — звичний SKU, навіть якщо він зараз недоступний. Nutrition завантажується через `get_product_details` лише для обраного товару; помилка збагачення не скасовує чернетку.
 
 ### `DraftAgent`
 
@@ -172,7 +172,7 @@ Raw MCP mapping поза моделлю:
 | History | `silpo_get_my_online_orders`, `silpo_get_my_offline_orders` |
 | Product search | `silpo_find_products_batch` |
 | Enrichment | `silpo_get_promotions`, `silpo_get_product_details` |
-| Alternatives | `silpo_get_similar_products`, `silpo_get_replacements` |
+| Alternatives | `silpo_get_similar_products`, `silpo_get_replacements` (обидва на порту `SilpoGateway`) |
 
 `commit_confirmed_cart` не доступний Gemini. Route Handler викликає `CartCommitService` лише за наявності server-side approval record.
 

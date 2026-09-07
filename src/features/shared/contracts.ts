@@ -378,6 +378,7 @@ export interface SilpoGateway {
   getPromotions(context: CartContext): Promise<Promotion[]>;
   getProductDetails(context: CartContext, slug: string): Promise<ProductDetails>;
   getSimilarProducts(context: CartContext, slug: string): Promise<ProductCandidate[]>;
+  getReplacements(context: CartContext, slug: string): Promise<ProductCandidate[]>;
   getTimeSlots(context: CartContext): Promise<TimeSlot[]>;
   setAbsoluteCartQuantities(input: SetCartProductsInput): Promise<void>;
   readCart(cartId: string): Promise<VerifiedCart>;
