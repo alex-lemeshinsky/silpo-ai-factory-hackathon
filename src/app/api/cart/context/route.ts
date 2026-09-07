@@ -118,6 +118,11 @@ export async function POST(request: NextRequest): Promise<Response> {
     if (error instanceof SlotVerificationError) {
       return fail(409, "cart_validation_error", MSG_NOT_APPLIED, correlationId);
     }
+    // Silpo rejected the token and the session's single refresh did not
+    // recover it: the guest has to reauthorize.
+    if (error instanceof McpCallError && error.status === 401) {
+      return fail(401, "unauthorized", MSG_UNAUTHORIZED, correlationId);
+    }
     if (error instanceof McpCallError && error.status === 429) {
       return fail(
         429,

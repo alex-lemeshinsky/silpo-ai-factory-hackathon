@@ -232,6 +232,25 @@ describe("POST /api/cart/context", () => {
     });
   });
 
+  it("returns 401 when Silpo rejects the token after its one refresh", async () => {
+    const { McpCallError } = await vi.importActual<typeof import("@/features/silpo/live/session")>(
+      "@/features/silpo/live/session",
+    );
+    createLiveCartContextGateway.mockReturnValue({
+      updateCartContext: vi.fn(async () => {
+        throw new McpCallError("silpo_get_my_shopping_cart", 401, null);
+      }),
+    });
+
+    const response = await POST(makeRequest(body));
+
+    // The guest must be told to sign in again, not shown a generic failure.
+    expect(response.status).toBe(401);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: "unauthorized" },
+    });
+  });
+
   it("never leaks provider text into an error body", async () => {
     createLiveCartContextGateway.mockReturnValue({
       updateCartContext: vi.fn(async () => {

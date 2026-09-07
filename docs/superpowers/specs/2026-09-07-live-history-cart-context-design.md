@@ -91,6 +91,8 @@ Alternatives considered:
 
 `openWriteSession` sets a refresh budget of zero, disables fetch-level retry, has no retry wrapper, and disables transport auto-reconnection. A `401` on a write returns control immediately without a refresh attempt and without replaying the mutation.
 
+A `401` that survives the session's single refresh reaches the caller as `UnauthorizedError`, which carries no numeric status. The session classifies it as `401` so the route can require reauthorization; left unclassified it would be reported as an unexplained server error, and the "then require reauthorization" half of the rule would never be observable to the guest.
+
 The SDK's `SdkHttpError` carries `status`, `statusText` and `text` but not the response headers, so `Retry-After` cannot be recovered from the error. The read session observes it at the fetch layer, where the raw `Response` still exists, and attaches it to the `McpCallError` for that attempt. Without this the "use server metadata when present" branch is unreachable and every wait silently falls back to the local ladder.
 
 `live/retry.ts` is a pure module: `RETRY_ATTEMPT_LIMIT`, `computeRetryDelayMs(attempt, retryAfterHeader, remainingDeadlineMs)`, a `isRetryableStatus` classifier, and `withBoundedRetry(operation, policy)`. The existing `429` loop in `transport.ts` calls `computeRetryDelayMs` so the delay ladder is defined exactly once in the repository. This makes `oauth/transport.ts` import from `live/retry.ts`; the direction is acceptable because `retry.ts` is pure and depends on no session, transport, or MCP type.
@@ -178,7 +180,7 @@ Status mapping:
 | Requested slot unavailable or expired | 409 | `AppError` with code `needs_slot` |
 | Requested delivery type unavailable, or readback contradicts the write | 409 | `AppError` with code `cart_validation_error` |
 | Address change requested | 400 | `AppError` with code `unexpected` |
-| No or invalid session | 401 | `AppError` with code `unauthorized` |
+| No or invalid session, or Silpo rejects the token after its one refresh | 401 | `AppError` with code `unauthorized` |
 | Rate limited after retry exhaustion | 429 | `AppError` with `retryAfterMs` |
 | MCP response failed validation | 502 | `AppError` with code `invalid_external_data` |
 | Anything else | 500 | `AppError` with code `unexpected` and a correlation ID |

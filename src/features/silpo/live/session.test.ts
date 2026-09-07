@@ -455,9 +455,15 @@ describe("external failure shapes", () => {
       fetch: read.wrapped,
       sleep: async () => {},
     });
-    await expect(
-      readSession.callTool("silpo_get_my_shopping_cart", {}, z.object({})),
-    ).rejects.toThrow();
+    // Once the single refresh fails, the failure must be reported as an
+    // authorization problem so the caller can send the guest to reauthorize,
+    // not as an unexplained server error.
+    const thrown = await readSession
+      .callTool("silpo_get_my_shopping_cart", {}, z.object({}))
+      .then(() => null)
+      .catch((caught: unknown) => caught);
+    expect(thrown).toBeInstanceOf(McpCallError);
+    expect((thrown as McpCallError).status).toBe(401);
     // Exactly one: proves the delegation happens and that it stays bounded.
     expect(read.refreshAttempts()).toBe(1);
     await readSession.close();

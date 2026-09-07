@@ -1,8 +1,13 @@
-import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
+import {
+  Client,
+  StreamableHTTPClientTransport,
+  UnauthorizedError,
+} from "@modelcontextprotocol/client";
 import type { z } from "zod";
 
 import {
   createHardenedFetch,
+  ReauthorizationRequired,
   SILPO_MCP_SERVER_URL,
   type SilpoOAuthProvider,
 } from "../oauth/transport";
@@ -29,7 +34,10 @@ export class McpCallError extends Error {
     readonly retryAfterHeader: string | null,
     options?: { cause?: unknown },
   ) {
-    super(status === 429 ? "rate_limited" : "mcp_call_failed", options);
+    super(
+      status === 429 ? "rate_limited" : status === 401 ? "unauthorized" : "mcp_call_failed",
+      options,
+    );
     this.name = "McpCallError";
   }
 }
@@ -67,6 +75,19 @@ export interface OpenSessionOptions {
  * observes it at the fetch layer instead — see `observeRateLimit` below.
  */
 function extractStatus(error: unknown): number | null {
+  // An exhausted refresh surfaces as UnauthorizedError (or, once the fetch's
+  // refresh budget is spent, ReauthorizationRequired). Neither carries a
+  // numeric status, so without this the caller could not tell "sign in again"
+  // apart from an unexplained failure.
+  if (
+    error instanceof UnauthorizedError ||
+    error instanceof ReauthorizationRequired ||
+    (error instanceof Error &&
+      (error.name === "UnauthorizedError" || error.name === "ReauthorizationRequired"))
+  ) {
+    return 401;
+  }
+
   const candidate = error as { status?: unknown; code?: unknown; message?: unknown };
   for (const value of [candidate?.status, candidate?.code]) {
     if (typeof value === "number" && value >= 100 && value < 600) {
