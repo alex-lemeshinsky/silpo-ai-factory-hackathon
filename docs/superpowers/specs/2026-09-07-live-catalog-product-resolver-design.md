@@ -188,7 +188,9 @@ An unadvertised tool is rejected by the session before any network call, so a Si
 
 Per draft run the resolver issues at most one `findProducts` call with at most 30 queries, at most ten fallback calls, and at most ten `getProductDetails` calls.
 
-Those calls run as three sequential waves — the batch, then the fallbacks together, then the enrichments together — rather than need by need. Needs do not depend on each other, and twenty round trips in series would spend most of the median-≤12-second draft budget waiting. Determinism is unaffected: every wave is gathered in need order, and selection, the only step where needs interact, is a pure pass over the gathered results.
+Those calls are issued **sequentially**, one need at a time, even though the needs are independent of each other and overlapping them would cut up to twenty round trips down to three. One `McpSession` shares a single 401 refresh budget and one `Retry-After` observation across every call made through it, so concurrent lookups race both: an expired token that a serial call refreshes once, transparently, would instead fail every other call in flight, and because L11-08 makes fallbacks and enrichment non-fatal those failures would silently strip products and nutrition from the draft rather than reporting anything. The latency cost is accepted, and overlapping these calls is blocked on making the session concurrency-safe — a Task 10 module, out of scope here.
+
+The resolver is nevertheless structured so that only the two lookup steps are sequential: ranking each need and selecting across needs are pure passes over gathered results, so nothing but the round trips has to change when the session can support them.
 
 The resolver does **not** call `getPromotions`. `Promotion` carries no product linkage, so a branch promotion cannot be attached to a candidate without inventing the association; the resolver's discount signal comes from each candidate's own `specialPrice` and `promotions` instead. `getPromotions` remains a gateway obligation because it is on the port and Task 12 and Task 13 consume it, and it is covered by the contract test rather than by a resolver call.
 
@@ -223,6 +225,9 @@ The implementer must show red-to-green output for the contract and resolver suit
 
 - No Silpo credentials exist in this environment, so the read-only live smoke against `https://mcp.silpo.ua/mcp` cannot be run and the catalog field names in `schemas/catalog.ts` remain unreconciled against a live `tools/list`. This is carried forward from Tasks 9 and 10 and reported as an outstanding gap, not as a reason to weaken any test.
 - The demo fixture has search results for four queries only, so `bread` and `coffee` needs resolve to nothing in demo mode and are dropped. Broadening the fixture belongs to whichever later task owns the demo scenario.
+- Dropping a malformed product row (L11-02) is silent. If Silpo renamed a required field wholesale, every row would drop and the guest would see an empty draft rather than a reported failure. Task 17 owns diagnostics traces and should record a per-search drop count, which turns that case from invisible into diagnosable.
+- A product an earlier need selected is barred from later needs (L11-06) even when it is the *later* need's familiar SKU and only a generic candidate for the earlier one. Prediction sorts needs by confidence and category queries never collide, so this needs two different category searches to return the same product — rare enough to leave as a documented ordering rule rather than a bidding contest between needs.
+- Resolver lookups are sequential (L11-09), so a full ten-need run can spend up to twenty round trips. Whether that fits the median-≤12-second draft budget cannot be measured without live credentials.
 
 The handoff lists changed files, the exact commands and results, the remaining verification limits, and the commit hash. Task 11 stays unchecked in the backlog until implemented, reviewed and integrated.
 
@@ -230,7 +235,7 @@ The handoff lists changed files, the exact commands and results, the remaining v
 
 1. L11-01 and L11-02 were in genuine tension over a malformed product *row*. The first implementation read L11-01 as controlling and failed the whole batch, so one string-encoded price or one relative image URL would have ended a draft run. Rows are now parsed individually and dropped, which is what L11-02's own rationale asked for.
 2. An unusable promotion dropped its product, because the mapper left a `null` in the promotions array. Promotions are now skipped individually, as `getPromotions` already did.
-3. Needs resolved one at a time, up to twenty sequential round trips. They now run as three waves; L11-09 records it.
+3. Needs resolved one at a time, up to twenty sequential round trips. Overlapping them was attempted and reverted: `McpSession` shares a 401 refresh budget and a `Retry-After` observation across concurrent calls, so parallel lookups would have degraded the draft silently whenever a token expired mid-run. L11-09 records the constraint and the latency it costs; the resolver is now split so only the lookups are sequential.
 4. Nothing stopped two needs from selecting the same product, which `DraftSchema` rejects. L11-06 now requires cross-need exclusion.
 5. `docs/tasks.md` still declared the three-argument `resolveProducts`, and `docs/agent-architecture.md` still credited the resolver with fetching promotions.
 6. The unadvertised-tool assertion in the contract test exercises the fake rather than the session; it is kept as a routing assertion and says so.
