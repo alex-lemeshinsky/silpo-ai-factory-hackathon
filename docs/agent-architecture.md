@@ -164,6 +164,8 @@ Gemini не отримує всі raw MCP tools. На одному етапі д
 
 Ці tools є вузькими application wrappers. Вони повертають нормалізовані domain objects, а не raw MCP payloads.
 
+Ці п'ять tools є стелею, а не обов'язком. У MVP `CREATE_DRAFT` виконує один structured-output виклик без tools: resolver уже зібрав усіх кандидатів, а structured-output шлях AI SDK не підтримує tool calling. Task 12 лишається в межах обох лімітів.
+
 Raw MCP mapping поза моделлю:
 
 | High-level operation | MCP tools |
@@ -213,6 +215,10 @@ export const DraftProposalSchema = z.object({
 });
 ```
 
+`quantity` обчислює сервер. `executableQuantity` округлює `typicalQuantity` вгору до цілого `step` обраного товару й обмежує його `stock`; значення моделі завжди замінюється серверним. Модель може назвати кількість, але не може її змінити.
+
+`generateDraft` повертає `DraftGeneration = { proposal, source, attempts, normalizations }`, щоб Task 17 міг рахувати model fallback rate, а Task 13 — записувати sanitized trace.
+
 Після Zod parsing сервер перевіряє:
 
 - кожен `productId` і `externalProductId` існує в resolver input;
@@ -258,7 +264,7 @@ Prompt не дублює бізнес-алгоритм confidence: готови�
 | Немає доступного SKU | Позначити need unresolved; не робити товар confirmable |
 | Немає nutrition data | `insufficient`; нічого не виводити шляхом inference |
 | Gemini invalid output | Одна повторна model-спроба після stricter prompt |
-| Gemini недоступний після двох спроб | Deterministic proposal із reason-code templates |
+| Gemini недоступний після двох спроб | Deterministic proposal із reason-code templates (той самий deterministic builder також доповнює будь-яку потребу, яку пропустила успішна модель, тому часткова генерація коштує формулювань, а не рекомендацій) |
 | `401` MCP | Одна token refresh-спроба, потім reauthorization |
 | `429` read | До трьох bounded retries |
 | Невизначений cart write | Не повторювати через model loop; використати persisted absolute targets у commit service |

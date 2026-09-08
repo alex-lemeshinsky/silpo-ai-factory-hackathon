@@ -808,21 +808,27 @@ git commit -m "feat: resolve live product candidates"
 - Create: `src/features/agent/draft-output.ts`
 - Create: `src/features/agent/prompt.ts`
 - Create: `src/features/agent/draft-agent.ts`
+- Create: `src/features/agent/google-model.ts` (controller-approved addition)
+- Create: `src/features/agent/fallback.ts` (controller-approved addition)
 - Test: `src/features/agent/draft-agent.test.ts`
+- Test: `src/features/agent/draft-output.test.ts` (controller-approved addition)
+- Test: `src/features/agent/prompt.test.ts` (controller-approved addition)
+- Test: `src/features/agent/fallback.test.ts` (controller-approved addition)
+- Test: `tests/contract/gemini-draft-model.test.ts` (controller-approved addition)
 
 **Interfaces:**
 - Consumes: `ResolvedNeed[]`, sanitized `CustomerContext`.
-- Produces: `generateDraft(input): Promise<DraftProposal>`.
+- Produces: `generateDraft(input, options): Promise<DraftGeneration>` (envelope: `{ proposal, source, attempts, normalizations }`).
 
-- [ ] **Step 1: Install AI SDK provider**
+- [x] **Step 1: Install AI SDK provider**
 
 Run: `pnpm add ai @ai-sdk/google`.
 
-- [ ] **Step 2: Write failing model-adapter tests**
+- [x] **Step 2: Write failing model-adapter tests**
 
 ```ts
-it("rejects a product id absent from resolved candidates", async () => {
-  await expect(generateDraftWithModel(fakeModelReturningUnknownId, input)).rejects.toThrow("unknown product");
+it("rejects a product id absent from resolved candidates", () => {
+  expect(() => validateProposal(proposalWithUnknownId, input)).toThrow("unknown product");
 });
 
 it("does not pass personal fields to the model", async () => {
@@ -831,12 +837,14 @@ it("does not pass personal fields to the model", async () => {
 });
 ```
 
-- [ ] **Step 3: Confirm failure**
+Оркестратор переходить на детермінований fallback замість reject, згідно зі spec section 4, D2.
+
+- [x] **Step 3: Confirm failure**
 
 Run: `pnpm vitest run src/features/agent/draft-agent.test.ts`
 Expected: FAIL.
 
-- [ ] **Step 4: Define a Gemini-compatible output schema**
+- [x] **Step 4: Define a Gemini-compatible output schema**
 
 Use objects and arrays only; avoid unions and records:
 
@@ -853,11 +861,11 @@ export const DraftProposalSchema = z.object({
 });
 ```
 
-- [ ] **Step 5: Implement generation and post-validation**
+- [x] **Step 5: Implement generation and post-validation**
 
 Use `google(env.AGENT_MODEL)`, `thinking: low`, low randomness, and structured output. Post-validate IDs, quantities, prices, and alternatives against resolver input. If Gemini fails twice, build a deterministic explanation from reason codes rather than returning no draft.
 
-- [ ] **Step 6: Verify and commit**
+- [x] **Step 6: Verify and commit**
 
 Run: `pnpm vitest run src/features/agent/draft-agent.test.ts && pnpm typecheck`
 Expected: PASS.
@@ -866,6 +874,8 @@ Expected: PASS.
 git add src/features/agent package.json pnpm-lock.yaml
 git commit -m "feat: generate drafts with Gemini"
 ```
+
+Виконано 2026-09-08. Специфікація: [design](./superpowers/specs/2026-09-08-gemini-draft-agent-design.md). Живий виклик Gemini не виконано — немає API-ключа.
 
 ---
 
