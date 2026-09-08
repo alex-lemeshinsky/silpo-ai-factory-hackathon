@@ -79,7 +79,9 @@ No edit to `src/features/shared/contracts.ts`, `src/lib/env.ts`, `src/lib/result
 ## 6. Global constraints
 
 - Use `pnpm` exclusively. Task 13 adds no production dependency, no migration and no environment variable.
-- `src/features/drafts/service.ts` and `assemble.ts` import no React, no Next.js, no AI SDK, no MCP SDK and no `src/db/*` or `src/components/*` symbol. In particular `service.ts` must not import `@/features/agent/google-model`: generation arrives as an injected function, so the AI SDK never enters the service's module graph. A test asserts this.
+- `src/features/drafts/service.ts` and `assemble.ts` import no React, no Next.js, no AI SDK and no `src/db/*` or `src/components/*` symbol. In particular `service.ts` must not import `@/features/agent/google-model`: generation arrives as an injected function, so the AI SDK never enters the service's module graph. A test asserts this.
+- `service.ts` *does* import the typed error classes from `@/features/silpo/live/*` and `@/features/silpo/schemas/common`, which transitively loads the MCP SDK. This is deliberate. Classifying a failure by `instanceof` is the repository's established boundary idiom, and the alternative — matching on `error.name` strings — would turn a compile-time guarantee into a silent one. The purity rule in `AGENTS.md` names `src/features/purchases` and `src/features/prediction`; `src/features/drafts` is an application-service layer whose `repository.ts` already imports Drizzle and `@/db`. Only the AI SDK constraint above is absolute here.
+- `assemble.ts` stays pure: contracts, `PREDICTION_ALGORITHM_VERSION`, and the `DraftProposal` type only.
 - `src/features/silpo/gateway.ts` imports no React, no Next.js and no `src/db/*` symbol.
 - No client input reaches the run. `POST /api/drafts` reads no request body and no query parameter; `mode` comes from `env.DATA_MODE` and `userId` from the server-side session or the demo constant.
 - Live mode never returns the demo gateway and never silently substitutes demo data. A live composition failure is a typed error.
@@ -153,7 +155,7 @@ Consequences that the test pins:
 `src/features/drafts/demo-user.ts` exports a fixed constant and an idempotent ensure:
 
 ```ts
-export const DEMO_USER_ID = "00000000-0000-4000-8000-000000000001";
+export const DEMO_USER_ID = "00000000-0000-4000-8000-00000000de10";
 export async function ensureDemoUser(db: DbClient): Promise<string>;
 ```
 
