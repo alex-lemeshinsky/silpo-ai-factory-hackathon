@@ -472,3 +472,35 @@ it("drops the need when the fallback lookup fails", async () => {
 });
 
 
+
+it("never offers the same product for two needs", async () => {
+  const shared = candidate({ productId: "shared", externalProductId: 1, price: 20 });
+  const other = candidate({ productId: "other", externalProductId: 2, price: 30 });
+  const gateway = fakeGateway({ молоко: [shared], вода: [shared, other] });
+
+  const resolved = await resolveProducts(
+    [need(), need({ categoryKey: "water", preferredExternalProductIds: [50000] })],
+    context,
+    noRestrictions,
+    gateway,
+  );
+
+  // `DraftSchema` rejects a draft naming one product twice, and the earlier
+  // need was sorted first by confidence, so it keeps the product.
+  expect(resolved.map((item) => item.selected.productId)).toEqual(["shared", "other"]);
+  expect(resolved[1]?.alternatives.map((product) => product.productId)).toEqual([]);
+});
+
+it("drops a need whose only candidate an earlier need already took", async () => {
+  const shared = candidate({ productId: "shared", externalProductId: 1 });
+  const gateway = fakeGateway({ молоко: [shared], вода: [shared] });
+
+  const resolved = await resolveProducts(
+    [need(), need({ categoryKey: "water", preferredExternalProductIds: [50000] })],
+    context,
+    noRestrictions,
+    gateway,
+  );
+
+  expect(resolved.map((item) => item.need.categoryKey)).toEqual(["dairy"]);
+});

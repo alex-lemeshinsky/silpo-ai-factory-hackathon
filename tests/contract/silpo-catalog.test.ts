@@ -121,6 +121,9 @@ it("searches a batch with the cart branch and maps every result", async () => {
   ]);
 });
 
+// The gate itself belongs to Task 10 and is proven against the real session
+// in `session.test.ts`; this asserts only that the catalog gateway routes
+// every call through `callTool` and so inherits it.
 it("rejects a catalog tool the server does not advertise, without calling it", async () => {
   const session = createFakeSession(
     CATALOG_TOOLS.filter((tool) => tool !== "silpo_get_replacements"),
@@ -157,7 +160,7 @@ it("drops a product that could never be committed or represented", async () => {
   expect(result?.products.map((product) => product.productId)).toEqual(["keeper"]);
 });
 
-it("drops a product with a malformed promotion without failing the batch", async () => {
+it("keeps a product whose promotion is unusable and drops only the promotion", async () => {
   const session = createFakeSession(CATALOG_TOOLS, {
     silpo_find_products_batch: () => ({
       results: [
@@ -165,9 +168,38 @@ it("drops a product with a malformed promotion without failing the batch", async
           query: "молоко",
           products: [
             rawProduct({
-              id: "bad-promo",
-              promotions: [{ id: "promo-1", title: "", price: 10 }],
+              id: "untitled-promo",
+              promotions: [
+                { id: "promo-1", title: "", price: 10 },
+                { id: "promo-2", title: "Акція", price: 10 },
+              ],
             }),
+          ],
+        },
+      ],
+    }),
+  });
+
+  const [result] = await createLiveCatalogGateway({ readSession: session })
+    .findProducts(context, ["молоко"]);
+
+  // A banner without a title says nothing about whether the product can be
+  // bought, so it must not cost the guest the product.
+  expect(result?.products.map((product) => product.productId)).toEqual(["untitled-promo"]);
+  expect(result?.products[0]?.promotions.map((promotion) => promotion.id)).toEqual(["promo-2"]);
+});
+
+it("drops a malformed product row without failing the whole search", async () => {
+  const session = createFakeSession(CATALOG_TOOLS, {
+    silpo_find_products_batch: () => ({
+      results: [
+        {
+          query: "молоко",
+          products: [
+            // Shapes Silpo could plausibly send: a decimal encoded as a
+            // string, and an image path that is not an absolute URL.
+            rawProduct({ id: "string-price", price: "45.50" }),
+            rawProduct({ id: "relative-image", imageUrl: "/img/moloko.png" }),
             rawProduct({ id: "keeper" }),
           ],
         },
@@ -258,7 +290,7 @@ it("maps promotions, details, similar products and replacements", async () => {
   ]);
 });
 
-it("tolerates an unknown field but rejects a missing required one", async () => {
+it("tolerates an unknown field but rejects a malformed envelope", async () => {
   const tolerant = createFakeSession(CATALOG_TOOLS, {
     silpo_find_products_batch: () => ({
       unknownTopLevelField: true,
@@ -269,10 +301,10 @@ it("tolerates an unknown field but rejects a missing required one", async () => 
     .findProducts(context, ["молоко"]);
   expect(result?.products).toHaveLength(1);
 
+  // A single row is dropped, but a response whose shape cannot be trusted at
+  // all stops the flow rather than resolving against a guess.
   const malformed = createFakeSession(CATALOG_TOOLS, {
-    silpo_find_products_batch: () => ({
-      results: [{ query: "молоко", products: [{ ...rawProduct(), price: "45.50" }] }],
-    }),
+    silpo_find_products_batch: () => ({ results: [{ products: [rawProduct()] }] }),
   });
   await expect(
     createLiveCatalogGateway({ readSession: malformed }).findProducts(context, ["молоко"]),

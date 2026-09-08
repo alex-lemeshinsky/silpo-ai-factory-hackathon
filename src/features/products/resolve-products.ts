@@ -49,6 +49,23 @@ function planQueries(need: NeedCandidate): QueryPlan {
   };
 }
 
+/** One batch for the whole run: two categories sharing a query cost one search. */
+function planBatch(plans: QueryPlan[]): string[] {
+  const queries: string[] = [];
+  for (const plan of plans) {
+    const planQueryList = [
+      ...plan.articleQueries,
+      ...(plan.categoryQuery === null ? [] : [plan.categoryQuery]),
+    ];
+    for (const query of planQueryList) {
+      if (queries.length < MAX_BATCH_QUERIES && !queries.includes(query)) {
+        queries.push(query);
+      }
+    }
+  }
+  return queries;
+}
+
 function dedupeById(products: ProductCandidate[]): ProductCandidate[] {
   const seen = new Set<string>();
   const unique: ProductCandidate[] = [];
@@ -211,13 +228,24 @@ async function withNutrition(
   }
 }
 
-async function resolveOne(
+interface RankedNeed {
+  plan: QueryPlan;
+  /** Eligible candidates in selection order; empty when the need cannot be met. */
+  ranked: ProductCandidate[];
+}
+
+/**
+ * Builds one need's ranked shortlist. Needs do not depend on each other, so
+ * these run as one wave rather than ten in series — the draft has a median
+ * latency budget, and a round trip per need would spend most of it waiting.
+ */
+async function rankOne(
   plan: QueryPlan,
   byQuery: Map<string, ProductCandidate[]>,
   context: CartContext,
   customerContext: CustomerContext,
   gateway: CatalogPort,
-): Promise<ResolvedNeed | null> {
+): Promise<RankedNeed> {
   const { restrictionKeys } = customerContext;
   const pool = poolFor(plan, byQuery);
   const familiar = familiarIn(pool, plan.need);
@@ -231,21 +259,33 @@ async function resolveOne(
     ]);
   }
   if (eligible.length === 0) {
-    return null;
+    return { plan, ranked: [] };
   }
 
   const reference = referenceFor(eligible, familiar);
-  const ranked = [...eligible].sort(compareCandidates(reference));
-  const selected = familiarIn(eligible, plan.need) ?? ranked[0];
-  const alternatives = ranked
+  return { plan, ranked: [...eligible].sort(compareCandidates(reference)) };
+}
+
+interface Selection {
+  plan: QueryPlan;
+  selected: ProductCandidate;
+  alternatives: ProductCandidate[];
+}
+
+/**
+ * Picks one need's product from what earlier needs left. A selectable
+ * familiar SKU wins outright; otherwise the top of the ranking does.
+ */
+function selectFrom(rankedNeed: RankedNeed, taken: Set<string>): Selection | null {
+  const available = rankedNeed.ranked.filter((product) => !taken.has(product.productId));
+  if (available.length === 0) {
+    return null;
+  }
+  const selected = familiarIn(available, rankedNeed.plan.need) ?? available[0];
+  const alternatives = available
     .filter((product) => product.productId !== selected.productId)
     .slice(0, MAX_ALTERNATIVES);
-
-  return ResolvedNeedSchema.parse({
-    need: plan.need,
-    selected: await withNutrition(selected, context, gateway),
-    alternatives,
-  });
+  return { plan: rankedNeed.plan, selected, alternatives };
 }
 
 /**
@@ -259,19 +299,7 @@ export async function resolveProducts(
   gateway: CatalogPort,
 ): Promise<ResolvedNeed[]> {
   const plans = needs.slice(0, MAX_RESOLVED_NEEDS).map(planQueries);
-
-  const queries: string[] = [];
-  for (const plan of plans) {
-    const planQueryList = [
-      ...plan.articleQueries,
-      ...(plan.categoryQuery === null ? [] : [plan.categoryQuery]),
-    ];
-    for (const query of planQueryList) {
-      if (queries.length < MAX_BATCH_QUERIES && !queries.includes(query)) {
-        queries.push(query);
-      }
-    }
-  }
+  const queries = planBatch(plans);
   if (queries.length === 0) {
     return [];
   }
@@ -279,12 +307,34 @@ export async function resolveProducts(
   const results = await gateway.findProducts(context, queries);
   const byQuery = new Map(results.map((result) => [result.query, result.products]));
 
-  const resolved: ResolvedNeed[] = [];
-  for (const plan of plans) {
-    const item = await resolveOne(plan, byQuery, context, customerContext, gateway);
-    if (item !== null) {
-      resolved.push(item);
+  const rankedNeeds = await Promise.all(
+    plans.map((plan) => rankOne(plan, byQuery, context, customerContext, gateway)),
+  );
+
+  // Selection walks the needs in order and is pure, so an earlier need's
+  // choice bars a later one from repeating it: `DraftSchema` rejects a draft
+  // that names the same product twice, and prediction has already sorted
+  // these by confidence, so the earlier need has the better claim.
+  const taken = new Set<string>();
+  const selections: Selection[] = [];
+  for (const rankedNeed of rankedNeeds) {
+    const selection = selectFrom(rankedNeed, taken);
+    if (selection === null) {
+      continue;
     }
+    taken.add(selection.selected.productId);
+    selections.push(selection);
   }
-  return resolved;
+
+  const enriched = await Promise.all(
+    selections.map((selection) => withNutrition(selection.selected, context, gateway)),
+  );
+
+  return selections.map((selection, index) =>
+    ResolvedNeedSchema.parse({
+      need: selection.plan.need,
+      selected: enriched[index],
+      alternatives: selection.alternatives,
+    }),
+  );
 }

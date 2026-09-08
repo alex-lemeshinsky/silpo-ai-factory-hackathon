@@ -49,11 +49,21 @@ export const RawProductDetailsSchema = RawProductSchema.extend({
 });
 export type RawSilpoProductDetails = z.infer<typeof RawProductDetailsSchema>;
 
+/**
+ * Product rows stay unparsed here on purpose. The mapping boundary parses
+ * them one at a time so a single malformed row is dropped instead of failing
+ * an entire search — a price Silpo sends as a string, or an image path that
+ * is not an absolute URL, must not cost the guest every other product. The
+ * envelope around the rows is still validated, so a wrong-shaped response
+ * stops the flow.
+ */
+const rawProductRows = z.array(z.unknown()).default([]);
+
 export const FindProductsBatchResponseSchema = z.object({
   results: z.array(
     z.object({
       query: nonEmptyString,
-      products: z.array(RawProductSchema).default([]),
+      products: rawProductRows,
     }),
   ).default([]),
 });
@@ -67,5 +77,5 @@ export const ProductDetailsResponseSchema = z.object({
 });
 
 export const ProductListResponseSchema = z.object({
-  products: z.array(RawProductSchema).default([]),
+  products: rawProductRows,
 });

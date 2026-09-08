@@ -769,7 +769,7 @@ git commit -m "feat: read live Silpo purchase context"
 
 **Interfaces:**
 - Consumes: `NeedCandidate[]`, verified `CartContext`.
-- Produces: `resolveProducts(needs, context, gateway): ResolvedNeed[]`.
+- Produces: `resolveProducts(needs, context, customerContext, gateway): ResolvedNeed[]` (controller-approved: `CustomerContext` supplies `restrictionKeys`, without which dietary compatibility is unreachable).
 
 - [x] **Step 1: Write failing tests**
 
