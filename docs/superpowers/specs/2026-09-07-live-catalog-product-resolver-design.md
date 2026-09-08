@@ -1,6 +1,6 @@
 # Task 11 Live Catalog Gateway and Product Resolver Specification
 
-Status: proposed on 2026-09-07. Documentation only; implementation has not started. The file-ownership expansion in section 3 requires controller or user approval before execution.
+Status: implemented on 2026-09-07 and revised on 2026-09-08 after review. The file-ownership expansion in section 3 was approved and is recorded in the backlog. L11-01, L11-02, L11-06, L11-09 and L11-10 were amended by the review; see section 8.
 
 ## 1. Scope and authority
 
@@ -86,7 +86,7 @@ Alternatives considered:
 
 `schemas/catalog.ts` parses `silpo_find_products_batch`, `silpo_get_promotions`, `silpo_get_product_details`, `silpo_get_similar_products` and `silpo_get_replacements` through the existing `parseToolResult` helper.
 
-Schemas are **not** `.strict()`, for the same reason as Task 10's cart and history schemas: Zod strips unknown keys, so a field Silpo adds is additive rather than an outage. Required fields stay validated — a missing or wrongly typed one raises `InvalidExternalDataError` and the flow stops.
+Schemas are **not** `.strict()`, for the same reason as Task 10's cart and history schemas: Zod strips unknown keys, so a field Silpo adds is additive rather than an outage. Required fields stay validated, at two different scopes: a malformed **envelope** — a missing `results` array, a search result without its `query` — raises `InvalidExternalDataError` and the flow stops, while a malformed **row** inside a valid envelope is parsed on its own and dropped under L11-02. A decimal Silpo encodes as a string, or an image path that is not an absolute URL, must not cost the guest every other product in the batch.
 
 The raw product schema parses `companyId` and `branchId` as nullable identifiers so the boundary can act on their absence, and parses nutrition as an optional block of independently nullable numbers. Field names follow `SILPO_MCP.md` and must be reconciled against a live `tools/list` once credentials exist.
 
@@ -96,11 +96,13 @@ The raw product schema parses `companyId` and `branchId` as nullable identifiers
 
 Mappers construct contract objects field by field. No raw payload is spread into a returned object.
 
-A product is **dropped at the mapping boundary** when it cannot be represented as a valid `ProductCandidate`: its payload lacks `companyId` or `branchId`, or the mapped object fails `ProductCandidateSchema` (a special price above the list price, for example). A product missing those IDs could never be committed by Task 16, and `ProductCandidate` has nowhere to carry them, so absence is enforced here rather than travelling into the domain as an unusable candidate. Dropping rather than throwing keeps one malformed row from failing an entire search; a malformed *envelope* still raises `InvalidExternalDataError` under L11-01.
+A product is **dropped at the mapping boundary** when it cannot be represented as a valid `ProductCandidate`: its row fails `RawProductSchema`, its payload lacks `companyId` or `branchId`, or the mapped object fails `ProductCandidateSchema` (a special price above the list price, for example). The envelope schemas therefore hold product rows as `unknown` and the boundary parses them one at a time, so all three cases drop exactly one row. A product missing those IDs could never be committed by Task 16, and `ProductCandidate` has nowhere to carry them, so absence is enforced here rather than travelling into the domain as an unusable candidate. Dropping rather than throwing keeps one malformed row from failing an entire search; a malformed *envelope* still raises `InvalidExternalDataError` under L11-01.
 
 `getProductDetails` is the exception: it returns a single required object, so an unrepresentable product there raises `InvalidExternalDataError`. It is only ever called for a product that already passed this rule, so the case is genuinely anomalous — and L11-08 makes a details failure non-fatal anyway.
 
 Everything else is mapped faithfully, `available` and `stock` included. The gateway does not filter on availability, stock, service rows or dietary restrictions: those are domain policy and belong to the resolver, so that live and demo receive identical treatment from one implementation.
+
+An unusable promotion inside an otherwise valid product is skipped rather than dropping the product: a banner Silpo sent without a title or an ID says nothing about whether the product can be bought.
 
 `nutritionStatus` is `"known"` only when the payload carries a nutrition block with at least one finite value; otherwise it is `"insufficient"` with `null` nutrition. No value is ever derived from a partial block.
 
@@ -162,6 +164,8 @@ Selection: a selectable preferred SKU wins outright, taken in `preferredExternal
 
 Alternatives are the next three ranked entries, excluding the selected product and deduplicated by `productId`; `ResolvedNeedSchema` rejects a duplicate ID. Output preserves the input need order, which prediction already sorted by confidence.
 
+Selection is also deduplicated **across** needs: a product an earlier need selected is excluded from every later need's shortlist, selection and alternatives alike, and a need left with nothing is omitted. `DraftSchema` rejects a draft naming one product twice, so without this a search overlap between two categories would produce a resolver output that Task 13 could not turn into a draft. The earlier need has the better claim because prediction sorted the needs by confidence.
+
 Every returned `ResolvedNeed` is parsed through `ResolvedNeedSchema` before it leaves the resolver.
 
 ### L11-07 — Nutrition enrichment
@@ -184,13 +188,15 @@ An unadvertised tool is rejected by the session before any network call, so a Si
 
 Per draft run the resolver issues at most one `findProducts` call with at most 30 queries, at most ten fallback calls, and at most ten `getProductDetails` calls.
 
+Those calls run as three sequential waves — the batch, then the fallbacks together, then the enrichments together — rather than need by need. Needs do not depend on each other, and twenty round trips in series would spend most of the median-≤12-second draft budget waiting. Determinism is unaffected: every wave is gathered in need order, and selection, the only step where needs interact, is a pure pass over the gathered results.
+
 The resolver does **not** call `getPromotions`. `Promotion` carries no product linkage, so a branch promotion cannot be attached to a candidate without inventing the association; the resolver's discount signal comes from each candidate's own `specialPrice` and `promotions` instead. `getPromotions` remains a gateway obligation because it is on the port and Task 12 and Task 13 consume it, and it is covered by the contract test rather than by a resolver call.
 
 ### L11-10 — Test evidence
 
-`tests/contract/silpo-catalog.test.ts` drives the real gateway through an injected fake `callTool`: `tools/list` gating including rejection of an unadvertised catalog tool without a network call; the `find_products_batch` argument shape and `branchId` propagation; mapping for all five tools; a product missing `companyId` or `branchId` dropped; unknown extra fields tolerated; a missing required field raising `invalid_external_data`; nutrition present, partially present and absent.
+`tests/contract/silpo-catalog.test.ts` drives the real gateway through an injected fake `callTool`: the `find_products_batch` argument shape and `branchId` propagation; mapping for all five tools; a product missing `companyId` or `branchId` dropped; a malformed row dropped while the rest of the batch survives; an unusable promotion skipped while its product survives; unknown extra fields tolerated; a malformed envelope raising `invalid_external_data`; nutrition present, partially present and absent. It also asserts that the gateway routes every call through `callTool` and so inherits `tools/list` gating — the gate itself is Task 10's and is proven against the real session in `session.test.ts`.
 
-`src/features/products/resolve-products.test.ts` drives the pure resolver through a fake gateway: exact numeric article search preferred; an unavailable exact SKU falling back to replacements; stock filtering; `stock < step` rejection; promotion and discount ordering; equal-budget deterministic sorting; missing nutrition reported as `insufficient` and never derived; plastic-bag exclusion; dietary filtering including the emptied-pool drop; a need with no candidate omitted; the 30-query cap and the ten-need cap; alternatives capped at three and unique; and a non-fatal details failure.
+`src/features/products/resolve-products.test.ts` drives the pure resolver through a fake gateway: exact numeric article search preferred; an unavailable exact SKU falling back to replacements; stock filtering; `stock < step` rejection; promotion and discount ordering; equal-budget deterministic sorting; missing nutrition reported as `insufficient` and never derived; plastic-bag exclusion; dietary filtering including the emptied-pool drop; a need with no candidate omitted; the 30-query cap and the ten-need cap; alternatives capped at three and unique; a product never offered for two needs; and a non-fatal details failure.
 
 `src/features/products/category-queries.test.ts` holds the two pinning tests from L11-04.
 
@@ -219,3 +225,12 @@ The implementer must show red-to-green output for the contract and resolver suit
 - The demo fixture has search results for four queries only, so `bread` and `coffee` needs resolve to nothing in demo mode and are dropped. Broadening the fixture belongs to whichever later task owns the demo scenario.
 
 The handoff lists changed files, the exact commands and results, the remaining verification limits, and the commit hash. Task 11 stays unchecked in the backlog until implemented, reviewed and integrated.
+
+**Review outcome, 2026-09-08.** Implemented as `811fc87`; reviewed against this spec and amended in six places, each a case where the first implementation was faithful to the letter of a requirement that was itself wrong or silent:
+
+1. L11-01 and L11-02 were in genuine tension over a malformed product *row*. The first implementation read L11-01 as controlling and failed the whole batch, so one string-encoded price or one relative image URL would have ended a draft run. Rows are now parsed individually and dropped, which is what L11-02's own rationale asked for.
+2. An unusable promotion dropped its product, because the mapper left a `null` in the promotions array. Promotions are now skipped individually, as `getPromotions` already did.
+3. Needs resolved one at a time, up to twenty sequential round trips. They now run as three waves; L11-09 records it.
+4. Nothing stopped two needs from selecting the same product, which `DraftSchema` rejects. L11-06 now requires cross-need exclusion.
+5. `docs/tasks.md` still declared the three-argument `resolveProducts`, and `docs/agent-architecture.md` still credited the resolver with fetching promotions.
+6. The unadvertised-tool assertion in the contract test exercises the fake rather than the session; it is kept as a routing assertion and says so.

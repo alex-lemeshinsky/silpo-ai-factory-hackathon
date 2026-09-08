@@ -104,7 +104,7 @@ Model бере участь лише в `CREATE_DRAFT`. `WAIT_FOR_APPROVAL`, `CO
 4. `loadPurchaseHistory()` отримує offline/online history.
 5. `normalizePurchases()` очищає, дедуплікує і категоризує.
 6. `inferNeeds()` обчислює category-first candidates.
-7. `resolveProducts()` знаходить фактичні SKU, promotions, details і alternatives.
+7. `resolveProducts()` знаходить фактичні SKU, details і alternatives; знижки читає з полів самого товару, а не з `get_promotions`.
 8. Prompt builder видаляє приватні й зайві поля.
 9. Gemini повертає `DraftProposal`.
 10. Post-validator звіряє кожен ID, quantity, price assumption та alternative з resolver input.

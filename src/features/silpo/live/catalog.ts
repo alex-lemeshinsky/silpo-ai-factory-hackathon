@@ -15,6 +15,7 @@ import {
   ProductDetailsResponseSchema,
   ProductListResponseSchema,
   PromotionsResponseSchema,
+  RawProductSchema,
   type RawSilpoProduct,
   type RawSilpoProductDetails,
 } from "../schemas/catalog";
@@ -53,6 +54,22 @@ function toNutrition(raw: RawSilpoProduct["nutrition"]) {
     : { nutritionStatus: "insufficient" as const, nutrition: null };
 }
 
+/**
+ * An unusable promotion is skipped, never carried through as a hole in the
+ * list: a banner Silpo sent without a title says nothing about whether the
+ * product itself can be bought, so it must not cost the guest the product.
+ */
+function toPromotions(raw: RawSilpoProduct["promotions"]): Promotion[] {
+  return raw.flatMap((promotion) => {
+    const parsed = PromotionSchema.safeParse({
+      id: promotion.id,
+      label: promotion.title,
+      price: promotion.price,
+    });
+    return parsed.success ? [parsed.data] : [];
+  });
+}
+
 /** Built field by field: no raw payload is ever spread into a returned object. */
 function toCandidateFields(raw: RawSilpoProduct) {
   return {
@@ -68,14 +85,7 @@ function toCandidateFields(raw: RawSilpoProduct) {
     step: raw.step,
     displayRatio: raw.displayRatio,
     ...toNutrition(raw.nutrition),
-    promotions: raw.promotions.map((promotion) => {
-      const parsed = PromotionSchema.safeParse({
-        id: promotion.id,
-        label: promotion.title,
-        price: promotion.price,
-      });
-      return parsed.success ? parsed.data : null;
-    }),
+    promotions: toPromotions(raw.promotions),
   };
 }
 
@@ -89,18 +99,28 @@ function toCandidate(raw: RawSilpoProduct): ProductCandidate | null {
   if (raw.companyId === null || raw.branchId === null) {
     return null;
   }
-  try {
-    const parsed = ProductCandidateSchema.safeParse(toCandidateFields(raw));
-    return parsed.success ? parsed.data : null;
-  } catch {
-    return null;
-  }
+  const parsed = ProductCandidateSchema.safeParse(toCandidateFields(raw));
+  return parsed.success ? parsed.data : null;
 }
 
-function toCandidates(products: RawSilpoProduct[]): ProductCandidate[] {
-  return products
-    .map(toCandidate)
-    .filter((product): product is ProductCandidate => product !== null);
+/**
+ * Every product row is parsed on its own, so one row Silpo sent in an
+ * unexpected shape is dropped exactly like one that cannot be represented.
+ * The envelope holding the rows was already validated by `parseToolResult`.
+ */
+function toCandidates(rows: unknown[]): ProductCandidate[] {
+  const candidates: ProductCandidate[] = [];
+  for (const row of rows) {
+    const parsed = RawProductSchema.safeParse(row);
+    if (!parsed.success) {
+      continue;
+    }
+    const candidate = toCandidate(parsed.data);
+    if (candidate !== null) {
+      candidates.push(candidate);
+    }
+  }
+  return candidates;
 }
 
 function toDetails(tool: string, raw: RawSilpoProductDetails): ProductDetails {
@@ -153,14 +173,7 @@ export function createLiveCatalogGateway(deps: LiveCatalogDeps): LiveCatalogGate
         { branchId: context.branchId },
         PromotionsResponseSchema,
       );
-      return response.promotions.flatMap((promotion) => {
-        const parsed = PromotionSchema.safeParse({
-          id: promotion.id,
-          label: promotion.title,
-          price: promotion.price,
-        });
-        return parsed.success ? [parsed.data] : [];
-      });
+      return toPromotions(response.promotions);
     },
 
     async getProductDetails(context, slug) {
