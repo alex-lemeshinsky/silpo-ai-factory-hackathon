@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 
 import { generateDraftWithModel, type DraftModel, type DraftModelRequest } from "@/features/agent/draft-agent";
@@ -197,4 +199,35 @@ it("never rejects for a model fault", async () => {
   const model: DraftModel = { generateProposal: vi.fn().mockRejectedValue(new Error("boom")) };
 
   await expect(generateDraftWithModel(model, input())).resolves.toMatchObject({ source: "fallback" });
+});
+
+it("reports why it fell back", async () => {
+  const model = fakeModel(goodReply({ reason: "Лише 45 ₴ сьогодні" }));
+
+  const result = await generateDraftWithModel(model, input());
+
+  expect(result.source).toBe("fallback");
+  expect(result.normalizations).toContain("reason_contains_price");
+});
+
+it("carries codes from both failed attempts into the trace", async () => {
+  const model = fakeModel({ summary: 5, items: "nope" }, goodReply({ productId: "p-999" }));
+
+  const result = await generateDraftWithModel(model, input());
+
+  expect(result.normalizations).toEqual(expect.arrayContaining(["schema_invalid", "unknown_product"]));
+});
+
+it("keeps the orchestrator and its pure siblings free of the AI SDK", () => {
+  const forbidden = ["ai", "@ai-sdk", "./google-model", "react", "next", "drizzle", "@/db/"];
+
+  for (const file of ["draft-agent.ts", "draft-output.ts", "prompt.ts", "fallback.ts"]) {
+    const source = readFileSync(join(process.cwd(), "src/features/agent", file), "utf8");
+    const imports = [...source.matchAll(/from\s+"([^"]+)"/g)].map((match) => match[1]);
+    for (const specifier of imports) {
+      for (const marker of forbidden) {
+        expect(specifier === marker || specifier.startsWith(`${marker}/`), `${file} must not import ${specifier}`).toBe(false);
+      }
+    }
+  }
 });

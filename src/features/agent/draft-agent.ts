@@ -8,7 +8,6 @@ import {
   type ProposalViolationCode,
 } from "./draft-output";
 import { buildFallbackItem, buildFallbackProposal } from "./fallback";
-import { createGoogleDraftModel, type GoogleDraftModelOptions } from "./google-model";
 import {
   buildModelInput,
   buildRetryPrompt,
@@ -66,8 +65,12 @@ function completeProposal(
   return { proposal: DraftProposalSchema.parse({ summary: proposal.summary, items }), completed };
 }
 
-function fallbackGeneration(input: DraftAgentInput, attempts: number): DraftGeneration {
-  return { proposal: buildFallbackProposal(input), source: "fallback", attempts, normalizations: [] };
+function fallbackGeneration(
+  input: DraftAgentInput,
+  attempts: number,
+  normalizations: readonly ProposalViolationCode[] = [],
+): DraftGeneration {
+  return { proposal: buildFallbackProposal(input), source: "fallback", attempts, normalizations };
 }
 
 /**
@@ -85,7 +88,10 @@ export async function generateDraftWithModel(
 
   const modelInput = buildModelInput(input);
   const system = buildSystemInstruction();
+  /** The last attempt's codes; they steer the retry prompt. */
   let issues: ProposalViolationCode[] = [];
+  /** Every code seen across attempts; it is what the trace records. */
+  const observed = new Set<ProposalViolationCode>();
 
   for (let attempt = 1; attempt <= MAX_MODEL_ATTEMPTS; attempt += 1) {
     const prompt = attempt === 1 ? buildUserPrompt(modelInput) : buildRetryPrompt(modelInput, issues);
@@ -94,6 +100,7 @@ export async function generateDraftWithModel(
       const parsed = DraftProposalSchema.safeParse(raw);
       if (!parsed.success) {
         issues = ["schema_invalid"];
+        observed.add("schema_invalid");
         continue;
       }
 
@@ -109,20 +116,14 @@ export async function generateDraftWithModel(
       };
     } catch (error) {
       issues = error instanceof InvalidProposalError ? [...error.codes] : ["model_unavailable"];
+      for (const code of issues) {
+        observed.add(code);
+      }
     }
   }
 
-  return fallbackGeneration(input, MAX_MODEL_ATTEMPTS);
-}
-
-/**
- * The production entry point. `apiKey` and `model` come from `getServerEnv`
- * at the call site in Task 13, never from `process.env` here.
- */
-export async function generateDraft(
-  input: DraftAgentInput,
-  options: GoogleDraftModelOptions,
-): Promise<DraftGeneration> {
-  return generateDraftWithModel(createGoogleDraftModel(options), input);
+  // Why the model was abandoned is exactly what Task 17's invalid-output
+  // rate needs, so the fallback carries it rather than reporting nothing.
+  return fallbackGeneration(input, MAX_MODEL_ATTEMPTS, [...observed]);
 }
 

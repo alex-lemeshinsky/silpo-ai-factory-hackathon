@@ -1,6 +1,11 @@
 import { expect, it, vi } from "vitest";
 
-import { createGoogleDraftModel } from "@/features/agent/google-model";
+import { createGoogleDraftModel, generateDraft } from "@/features/agent/google-model";
+import {
+  NeedCandidateSchema,
+  ProductCandidateSchema,
+  ResolvedNeedSchema,
+} from "@/features/shared/contracts";
 
 const API_KEY = "test-key-not-a-real-credential";
 
@@ -81,4 +86,35 @@ it("keeps the API key out of thrown errors", async () => {
 
   await expect(model.generateProposal({ system: "s", prompt: "p" }))
     .rejects.toSatisfy((error: unknown) => !JSON.stringify(error, Object.getOwnPropertyNames(error)).includes(API_KEY));
+});
+
+it("composes the adapter into a draft run that survives a provider outage", async () => {
+  const { fetch } = stubFetch(() => new Response("upstream exploded", { status: 500 }));
+  const resolved = ResolvedNeedSchema.parse({
+    need: NeedCandidateSchema.parse({
+      categoryKey: "dairy", confidence: 0.8, confidenceBand: "high", typicalQuantity: 1,
+      reasonCodes: ["category_repeat"], preferredExternalProductIds: [40123],
+      features: {
+        weightedPurchaseCount: 6, medianIntervalDays: 7, intervalMadDays: 1,
+        daysSinceLastPurchase: 8, activeCityShare: 1, repeatScore: 0.9, dueScore: 1, stabilityScore: 0.8,
+      },
+    }),
+    selected: ProductCandidateSchema.parse({
+      productId: "p-1", externalProductId: 40123, slug: "s", name: "Молоко", imageUrl: null,
+      price: 45.5, specialPrice: null, available: true, stock: 20, step: 1, displayRatio: 0.9,
+      nutritionStatus: "insufficient", nutrition: null, promotions: [],
+    }),
+    alternatives: [],
+  });
+
+  const result = await generateDraft({
+    mode: "live",
+    resolvedNeeds: [resolved],
+    customerContext: { familySize: 2, restrictionKeys: [], loyaltyBonusAvailable: null },
+  }, { apiKey: API_KEY, model: "gemini-3.7-flash", fetch });
+
+  expect(result.source).toBe("fallback");
+  expect(result.attempts).toBe(2);
+  expect(result.normalizations).toContain("model_unavailable");
+  expect(result.proposal.items[0].productId).toBe("p-1");
 });

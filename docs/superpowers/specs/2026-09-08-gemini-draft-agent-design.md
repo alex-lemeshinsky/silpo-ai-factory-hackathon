@@ -1,6 +1,6 @@
 # Task 12 Gemini Draft Agent Specification
 
-Status: approved on 2026-09-08, not yet implemented. The file-ownership expansion in section 3 and the three deviations in section 4 were approved before code work.
+Status: implemented on 2026-09-08 as `5046303` and revised the same day after review. The file-ownership expansion in section 3 and the three deviations in section 4 were approved before code work. T12-04, T12-06, T12-08 and the module-graph constraint in section 6 were amended by the review; see section 10.
 
 ## 1. Scope and authority
 
@@ -70,7 +70,7 @@ No edit to `src/features/shared/contracts.ts`, `src/lib/env.ts`, `src/lib/result
 
 - Use `pnpm` exclusively. Task 12 adds exactly two production dependencies: `ai` and `@ai-sdk/google`.
 - `src/features/agent/*` imports no React, no Next.js, no MCP SDK, no database client, and no `src/db/*` or `src/components/*` symbol. Only `google-model.ts` imports `ai` or `@ai-sdk/google`.
-- The module graph inside `src/features/agent/` runs one way: `draft-output.ts` depends on nothing else in the directory; `prompt.ts` and `fallback.ts` depend on it; `draft-agent.ts` depends on all three and on `google-model.ts`. `google-model.ts` therefore takes `DraftModel` from `draft-agent.ts` through `import type` only, so the one cycle in the graph is erased at compile time and never exists at runtime.
+- The module graph inside `src/features/agent/` runs one way and contains no cycle at all: `draft-output.ts` depends on nothing else in the directory; `prompt.ts` and `fallback.ts` depend on it; `draft-agent.ts` depends on those three; `google-model.ts` sits at the top and depends on `draft-agent.ts`, and nothing depends on `google-model.ts`. The production entry point `generateDraft` therefore lives in `google-model.ts`, not in `draft-agent.ts` — otherwise importing the provider-agnostic orchestrator would drag the AI SDK into the module graph transitively, and the isolation this arrangement exists for would hold only by accident. A test asserts the four lower modules import no `ai`, `@ai-sdk/*` or `./google-model` specifier.
 - Do not edit any file outside the ownership table in section 3.
 - Gemini never invents or alters a product ID, price, special price, stock level, promotion, package `step`, `displayRatio`, nutrition value, quantity or checkout state.
 - Model input never contains a full name, phone, email, precise address, loyalty barcode, profile ID, session ID, idempotency key, OAuth token, database key, checkout URL, raw receipt or raw MCP payload.
@@ -157,16 +157,18 @@ It builds the run's allowlist from `input.resolvedNeeds` — for each need, the 
 - an `externalProductId` that disagrees with the server's value for that `productId`, since it is the key Task 16 writes to the cart;
 - an `alternativeId` absent from that same need's alternatives — an alternative belonging to a different need included;
 - a `reason` that is empty after trimming;
-- a `reason` containing a currency amount or a percentage, matched as a digit separated by at most whitespace from `₴`, `%`, `грн` or `UAH`, in either order. Price and discount are server facts the UI renders in their own fields; prose carrying one is inventing a fact the post-validator cannot check.
+- a `reason` containing a currency amount or a percentage, matched as a digit separated by at most whitespace from `₴`, `%`, `грн` or `UAH`, in either order. Price and discount are server facts the UI renders in their own fields; prose carrying one is inventing a fact the post-validator cannot check;
+- a `summary` failing that same check. `draft-overview.tsx` renders the summary as the dashboard's hero line, directly above the server-computed total, so an invented saving there contradicts a real number on the same screen.
 
 **Normalized**, with the model's value replaced and a violation code recorded for the trace:
 
 - `quantity` — always replaced by the server value from T12-05, whether or not the model agreed. The `quantity_replaced` code is recorded only when the model's value actually differed, so the code stays a signal rather than appearing on every run;
 - item order — the returned items follow `input.resolvedNeeds` order, which prediction already sorted by confidence. The model's ranking authority is over `alternativeIds` within a need, not over which needs matter;
 - a duplicate `productId` — the first occurrence is kept and later ones dropped, since `DraftSchema` rejects a draft naming one product twice;
-- `alternativeIds` the model omitted — appended after the ones it named, in resolver order, so no swap option silently disappears from the UI. The model's own order is preserved for the IDs it did name.
+- `alternativeIds` the model omitted — appended after the ones it named, in resolver order, so no swap option silently disappears from the UI. The model's own order is preserved for the IDs it did name;
+- a repeated `alternativeId` — deduplicated, keeping first position. `DraftItemSchema.alternatives` carries no uniqueness refinement, unlike `ResolvedNeedSchema`, so a repeat would render the same swap option twice.
 
-`summary` is passed through after trimming. It is already length-bounded by the schema, and it names no product, so it carries no ID to verify.
+`summary` is otherwise passed through after trimming: it is length-bounded by the schema and names no product, so beyond the price check it carries no ID to verify.
 
 `validateProposal` returns items only for the needs the model actually named, in resolver order. Completing an omitted need is the orchestrator's job under T12-08, not the validator's: `fallback.ts` depends on `executableQuantity` from this module, so a validator that called the fallback builder would close an import cycle between the two files.
 
@@ -198,7 +200,7 @@ export interface DraftModel {
 
 The port returns `unknown`, so schema validation stays inside the pure agent and a fake model can exercise both the schema path and the semantic path.
 
-`google-model.ts` exports `createGoogleDraftModel(options: { apiKey: string; model: string; timeoutMs?: number; fetch?: typeof globalThis.fetch }): DraftModel`. It:
+`google-model.ts` exports `createGoogleDraftModel(options: { apiKey: string; model: string; timeoutMs?: number; fetch?: typeof globalThis.fetch }): DraftModel`, and the production entry point `generateDraft(input, options)` that composes it with `generateDraftWithModel`. It:
 
 - builds the provider with `createGoogleGenerativeAI({ apiKey, fetch })` rather than the ambient `google` singleton, so the key is explicit and the contract test can inject `fetch`;
 - calls `generateText` with `output: Output.object({ schema: DraftProposalSchema })`. `generateObject` is deprecated in `ai@7` and is not used;
@@ -234,10 +236,9 @@ export interface DraftGeneration {
   normalizations: readonly ProposalViolationCode[];
 }
 export function generateDraftWithModel(model: DraftModel, input: DraftAgentInput): Promise<DraftGeneration>;
-export function generateDraft(input: DraftAgentInput, options: { apiKey: string; model: string }): Promise<DraftGeneration>;
 ```
 
-`generateDraft` is the thin composition: it constructs the Google adapter and delegates. `generateDraftWithModel` is the unit under test.
+`generateDraftWithModel` is the unit under test. `generateDraft`, the thin composition that constructs the Google adapter and delegates, is exported from `google-model.ts` instead, so this module never references a provider.
 
 The ladder:
 
@@ -245,7 +246,7 @@ The ladder:
 2. Attempt 1 — `buildModelInput`, `buildSystemInstruction`, `buildUserPrompt`, then `model.generateProposal`. Parse with `DraftProposalSchema.safeParse`, then `validateProposal`. Success returns `{ source: "model", attempts: 1 }`.
 3. Any failure of attempt 1 — a thrown provider error, a schema failure or a rejected semantic violation — leads to attempt 2 with `buildRetryPrompt` carrying the normalized violation codes.
 4. Attempt 2 succeeding returns `{ source: "model", attempts: 2 }`.
-5. Attempt 2 failing returns `buildFallbackProposal(input)` with `source: "fallback"` and `attempts: 2`.
+5. Attempt 2 failing returns `buildFallbackProposal(input)` with `source: "fallback"`, `attempts: 2`, and `normalizations` holding the union of the violation codes observed across both attempts. Why the model was abandoned is precisely what Task 17's invalid-output rate needs, so the fallback carries it rather than reporting nothing. The last attempt's codes alone steer the retry prompt; the union is what the trace records.
 
 After a successful attempt, the orchestrator composes the final item list: the validated items, plus `buildFallbackItem` for every resolved need the model omitted, ordered by `input.resolvedNeeds`. The result therefore always holds exactly one item per resolved need, whichever source produced it, and a model that names only half the needs costs the user wording rather than recommendations. This composition lives here because `fallback.ts` already imports `executableQuantity` from `draft-output.ts`; putting it in the validator would close an import cycle.
 
@@ -281,7 +282,7 @@ Task 12 writes no log line and creates no trace. It returns `source` and `attemp
 | T12-06 | Adapter sends the configured model, zero temperature, low thinking, `maxRetries: 0` and a closed schema; errors propagate; key never in an error message | `gemini-draft-model.test.ts` |
 | T12-07 | Vocabulary pinned both ways against `score.ts`; fallback copy free of price and percentage; fallback passes `validateProposal` | `fallback.test.ts` |
 | T12-08 | Full ladder including two-failure fallback, `attempts` reported correctly, empty input short-circuit, no rejection for a model fault, one item per resolved need after composition | `draft-agent.test.ts` |
-| T12-09 | Violation codes are normalized identifiers carrying no model text or product name | `draft-output.test.ts` |
+| T12-09 | Violation codes are normalized identifiers carrying no model text or product name, and the fallback path reports why it fell back | `draft-output.test.ts`, `draft-agent.test.ts` |
 | T12-10 | Focused suites pass from a clean invocation alongside `pnpm typecheck` | `pnpm vitest run src/features/agent tests/contract/gemini-draft-model.test.ts` |
 
 ## 9. Completion and handoff
@@ -296,3 +297,13 @@ The implementer must show red-to-green output for every suite named above, the u
 - Demo latency targets in agent architecture section 11 are measured by Task 18, not here.
 
 The handoff lists changed files, the exact commands and results, the remaining verification limits, and the commit hash. Task 12 stays unchecked in the backlog until implemented, reviewed and integrated.
+
+## 10. Review outcome, 2026-09-08
+
+Implemented as `5046303`; reviewed against this specification and amended in five places. Every finding was a defect in this document that the implementation reproduced faithfully, not a deviation by the implementer. All gates passed both before and after the fixes; nothing consumed `src/features/agent/` yet, so no dependent task was disturbed.
+
+1. **The summary bypassed the no-invented-facts guard.** T12-04 justified passing `summary` through with "it names no product, so it carries no ID to verify" — reasoning about identifiers that silently ignored prose facts. `draft-overview.tsx` renders the summary as the dashboard's hero line, directly above the server-computed total, so a model returning «Ви заощадите 120 ₴ і 15%» put an invented saving next to a real number that contradicted it. The price check now covers the summary as a rejection, under the new `summary_contains_price` code.
+2. **The provider-agnostic orchestrator transitively loaded the AI SDK.** Section 6 required the module graph to run one way but placed `generateDraft` in `draft-agent.ts`, which therefore imported `google-model.ts`, which imports `ai` and `@ai-sdk/google`. Every consumer of `generateDraftWithModel` — its own suite included — pulled the SDK into its module graph, so the isolation the arrangement exists for held only by accident, and the `import type` cycle the specification carved out an exception for was unnecessary. `generateDraft` moved to `google-model.ts`; the graph now has no cycle, and a purity test asserts the four lower modules import no `ai`, `@ai-sdk/*` or `./google-model` specifier.
+3. **The fallback path reported no reason for falling back.** T12-08 returned `normalizations: []` from the fallback, discarding the codes from both failed attempts — the one path where they matter most, and the input Task 17's invalid-output rate needs. The fallback now carries the union of codes observed across attempts; the last attempt's codes alone still steer the retry prompt.
+4. **A repeated `alternativeId` survived validation.** `DraftItemSchema.alternatives` has no uniqueness refinement, unlike `ResolvedNeedSchema`, so a model naming one alternative three times would have rendered the same swap option three times in Task 15. Alternatives are now deduplicated, keeping first position, under the new `duplicate_alternative` code.
+5. **The fallback vocabulary had a second, unpinned ordering list.** T12-07 pinned `REASON_CLAUSES` against `score.ts` in both directions, but the reason builder iterated a separate `CLAUSE_ORDER` array that no test covered: a code added to the scorer and the vocabulary but forgotten in the ordering list would silently never render, while the pinning test still passed. `CLAUSE_ORDER` is deleted; the vocabulary's own declaration order is now the priority order, so the second list cannot drift because it no longer exists.

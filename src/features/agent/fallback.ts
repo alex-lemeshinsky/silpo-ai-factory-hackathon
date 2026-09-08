@@ -13,6 +13,11 @@ import {
  * by the test, so a code added to Task 5 cannot silently lose its copy.
  * Each clause states only what its code already asserts — never a price, a
  * discount or a nutrition claim.
+ *
+ * Declaration order **is** the priority order: most explanatory first. A
+ * second list would be a thing to forget — the pinning test cannot see an
+ * ordering array, so a code added here but missing there would silently
+ * never render.
  */
 export const REASON_CLAUSES: Record<string, string> = Object.freeze({
   cycle_due: "за вашим звичним циклом час поповнити запас",
@@ -22,16 +27,6 @@ export const REASON_CLAUSES: Record<string, string> = Object.freeze({
   other_city_history: "частину покупок зроблено в іншому місті",
   quantity_uncertain: "кількість орієнтовна",
 });
-
-/** Most explanatory first; the tail is dropped rather than truncated. */
-const CLAUSE_ORDER = [
-  "cycle_due",
-  "category_repeat",
-  "stable_cycle",
-  "familiar_sku",
-  "other_city_history",
-  "quantity_uncertain",
-];
 
 /** `DraftItemSchema` caps `reason` at 160 and `summary` at 180. */
 export const MAX_REASON_LENGTH = 160;
@@ -48,7 +43,9 @@ function truncateAtWord(value: string, limit: number): string {
 }
 
 function buildFallbackReason(reasonCodes: readonly string[]): string {
-  const clauses = CLAUSE_ORDER
+  // The tail is dropped rather than truncated, so a reason always ends on a
+  // whole clause.
+  const clauses = Object.keys(REASON_CLAUSES)
     .filter((code) => reasonCodes.includes(code))
     .slice(0, MAX_REASON_CLAUSES)
     .map((code) => REASON_CLAUSES[code]);
