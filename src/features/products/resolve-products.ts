@@ -234,11 +234,7 @@ interface RankedNeed {
   ranked: ProductCandidate[];
 }
 
-/**
- * Builds one need's ranked shortlist. Needs do not depend on each other, so
- * these run as one wave rather than ten in series — the draft has a median
- * latency budget, and a round trip per need would spend most of it waiting.
- */
+/** Builds one need's ranked shortlist, issuing at most one fallback lookup. */
 async function rankOne(
   plan: QueryPlan,
   byQuery: Map<string, ProductCandidate[]>,
@@ -307,9 +303,16 @@ export async function resolveProducts(
   const results = await gateway.findProducts(context, queries);
   const byQuery = new Map(results.map((result) => [result.query, result.products]));
 
-  const rankedNeeds = await Promise.all(
-    plans.map((plan) => rankOne(plan, byQuery, context, customerContext, gateway)),
-  );
+  // Sequential on purpose, despite the round trips. One `McpSession` shares a
+  // single 401 refresh budget and one `Retry-After` observation across every
+  // call made through it, so concurrent lookups would race both: an expired
+  // token that one serial call refreshes transparently would instead fail
+  // every other call in flight, silently stripping fallbacks and nutrition
+  // from the draft. Overlapping these needs a concurrency-safe session first.
+  const rankedNeeds: RankedNeed[] = [];
+  for (const plan of plans) {
+    rankedNeeds.push(await rankOne(plan, byQuery, context, customerContext, gateway));
+  }
 
   // Selection walks the needs in order and is pure, so an earlier need's
   // choice bars a later one from repeating it: `DraftSchema` rejects a draft
@@ -326,15 +329,15 @@ export async function resolveProducts(
     selections.push(selection);
   }
 
-  const enriched = await Promise.all(
-    selections.map((selection) => withNutrition(selection.selected, context, gateway)),
-  );
-
-  return selections.map((selection, index) =>
-    ResolvedNeedSchema.parse({
-      need: selection.plan.need,
-      selected: enriched[index],
-      alternatives: selection.alternatives,
-    }),
-  );
+  const resolved: ResolvedNeed[] = [];
+  for (const selection of selections) {
+    resolved.push(
+      ResolvedNeedSchema.parse({
+        need: selection.plan.need,
+        selected: await withNutrition(selection.selected, context, gateway),
+        alternatives: selection.alternatives,
+      }),
+    );
+  }
+  return resolved;
 }

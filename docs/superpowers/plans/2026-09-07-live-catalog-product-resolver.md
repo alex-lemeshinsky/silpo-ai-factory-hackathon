@@ -10,7 +10,7 @@
 
 **Spec:** [2026-09-07-live-catalog-product-resolver-design.md](../specs/2026-09-07-live-catalog-product-resolver-design.md)
 
-> **Executed 2026-09-07 as `811fc87`, then revised by review on 2026-09-08.** Six behaviors below no longer match the shipped code — row-level product parsing, promotion tolerance, parallel resolution waves, cross-need product exclusion, and two documentation lines. The spec's section 8 records what changed and why; read it rather than this plan for current behavior.
+> **Executed 2026-09-07 as `811fc87`, then revised by review on 2026-09-08.** Several behaviors below no longer match the shipped code — row-level product parsing, promotion tolerance, cross-need product exclusion, and two documentation lines. The spec's section 8 records what changed and why; read it rather than this plan for current behavior.
 
 ## Global Constraints
 
