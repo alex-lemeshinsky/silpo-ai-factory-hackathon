@@ -48,7 +48,7 @@ No edit to `src/features/shared/contracts.ts`, `src/lib/env.ts`, `src/lib/result
 
 ## 4. Approved deviations from the backlog
 
-**D1 — `generateDraft` returns an envelope, not a bare proposal.** The backlog's interface line reads `generateDraft(input): Promise<DraftProposal>`. Agent architecture section 14 requires a *model fallback rate* online metric and section 13 requires a sanitized correlation trace; neither is computable from a bare proposal, because the caller cannot tell a model-authored draft from a deterministic one. `generateDraft` therefore returns `DraftGeneration = { proposal, source, attempts }`. This is a refinement that strengthens compliance, not a weakening.
+**D1 — `generateDraft` returns an envelope, not a bare proposal.** The backlog's interface line reads `generateDraft(input): Promise<DraftProposal>`. Agent architecture section 14 requires a *model fallback rate* online metric and section 13 requires a sanitized correlation trace; neither is computable from a bare proposal, because the caller cannot tell a model-authored draft from a deterministic one. `generateDraft` therefore returns `DraftGeneration = { proposal, source, attempts, normalizations }`. This is a refinement that strengthens compliance, not a weakening.
 
 **D2 — the unknown-ID rejection is tested on the validator, not on the orchestrator.** The backlog's step 2 shows `generateDraftWithModel(fakeModelReturningUnknownId, input)` rejecting with `"unknown product"`, while its own step 5 requires that two model failures produce a deterministic draft rather than none. A fake that always returns an unknown ID satisfies both conditions at once, so the two lines cannot both hold at the orchestrator. The product requirement wins there: `generateDraftWithModel` never rejects for a model or provider fault. The guardrail keeps a mechanical test by moving down one level — the pure `validateProposal` throws `UnknownProductError`, whose message contains `unknown product`, and the orchestrator's own test asserts that this rejection is what drives the retry and then the fallback.
 
@@ -70,6 +70,7 @@ No edit to `src/features/shared/contracts.ts`, `src/lib/env.ts`, `src/lib/result
 
 - Use `pnpm` exclusively. Task 12 adds exactly two production dependencies: `ai` and `@ai-sdk/google`.
 - `src/features/agent/*` imports no React, no Next.js, no MCP SDK, no database client, and no `src/db/*` or `src/components/*` symbol. Only `google-model.ts` imports `ai` or `@ai-sdk/google`.
+- The module graph inside `src/features/agent/` runs one way: `draft-output.ts` depends on nothing else in the directory; `prompt.ts` and `fallback.ts` depend on it; `draft-agent.ts` depends on all three and on `google-model.ts`. `google-model.ts` therefore takes `DraftModel` from `draft-agent.ts` through `import type` only, so the one cycle in the graph is erased at compile time and never exists at runtime.
 - Do not edit any file outside the ownership table in section 3.
 - Gemini never invents or alters a product ID, price, special price, stock level, promotion, package `step`, `displayRatio`, nutrition value, quantity or checkout state.
 - Model input never contains a full name, phone, email, precise address, loyalty barcode, profile ID, session ID, idempotency key, OAuth token, database key, checkout URL, raw receipt or raw MCP payload.
@@ -144,7 +145,9 @@ Deliberately excluded, narrowing section 8's ceiling: `slug`, `imageUrl`, `step`
 
 ### T12-04 — Semantic post-validation
 
-`draft-output.ts` exports `validateProposal(proposal: DraftProposal, input: DraftAgentInput): DraftProposal`.
+`draft-output.ts` exports `validateProposal(proposal: DraftProposal, input: DraftAgentInput): ValidatedProposal`, where `ValidatedProposal` is `{ proposal: DraftProposal; normalizations: readonly ProposalViolationCode[] }`. Rejections travel as the `codes` field of a thrown error; normalizations have to travel as a return value, or T12-09's trace obligation has no channel and "recorded for the trace" is unimplementable.
+
+`DraftAgentInput` is declared in this module rather than in `prompt.ts`, because `prompt.ts` imports `executableQuantity` from here and the dependency must not run both ways.
 
 It builds the run's allowlist from `input.resolvedNeeds` — for each need, the selected product and its alternatives — and applies one question to every anomaly: *does this risk showing the user an unverified fact?*
 
@@ -158,7 +161,7 @@ It builds the run's allowlist from `input.resolvedNeeds` — for each need, the 
 
 **Normalized**, with the model's value replaced and a violation code recorded for the trace:
 
-- `quantity` — always replaced by the server value from T12-05, whether or not the model agreed;
+- `quantity` — always replaced by the server value from T12-05, whether or not the model agreed. The `quantity_replaced` code is recorded only when the model's value actually differed, so the code stays a signal rather than appearing on every run;
 - item order — the returned items follow `input.resolvedNeeds` order, which prediction already sorted by confidence. The model's ranking authority is over `alternativeIds` within a need, not over which needs matter;
 - a duplicate `productId` — the first occurrence is kept and later ones dropped, since `DraftSchema` rejects a draft naming one product twice;
 - `alternativeIds` the model omitted — appended after the ones it named, in resolver order, so no swap option silently disappears from the UI. The model's own order is preserved for the IDs it did name.
@@ -228,6 +231,7 @@ export interface DraftGeneration {
   proposal: DraftProposal;
   source: "model" | "fallback";
   attempts: number;
+  normalizations: readonly ProposalViolationCode[];
 }
 export function generateDraftWithModel(model: DraftModel, input: DraftAgentInput): Promise<DraftGeneration>;
 export function generateDraft(input: DraftAgentInput, options: { apiKey: string; model: string }): Promise<DraftGeneration>;
