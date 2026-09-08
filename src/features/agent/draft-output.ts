@@ -76,6 +76,8 @@ export type ProposalViolationCode =
   | "alternative_not_in_need"
   | "reason_empty"
   | "reason_contains_price"
+  | "summary_contains_price"
+  | "duplicate_alternative"
   | "schema_invalid"
   | "model_unavailable"
   | "quantity_replaced"
@@ -137,6 +139,14 @@ function collectRejections(
   allowlist: Map<string, AllowlistEntry>,
 ): ProposalViolationCode[] {
   const codes: ProposalViolationCode[] = [];
+
+  // The summary is the dashboard's hero line, rendered directly above the
+  // server-computed total. An invented saving there contradicts a real
+  // number on the same screen, so it is held to the same rule as a reason.
+  if (PRICE_CLAIM.test(proposal.summary)) {
+    codes.push("summary_contains_price");
+  }
+
   for (const item of proposal.items) {
     const entry = allowlist.get(item.productId);
     if (entry === undefined) {
@@ -198,14 +208,21 @@ export function validateProposal(
       normalizations.add("alternatives_completed");
     }
 
+    // The model's ranking survives for what it named; the rest follow in
+    // resolver order so no swap option disappears from the UI. Deduping is
+    // this module's job: `DraftItemSchema.alternatives` has no uniqueness
+    // refinement, so a repeated id would render the same swap twice.
+    const alternativeIds = [...new Set([...item.alternativeIds, ...missing])];
+    if (alternativeIds.length !== item.alternativeIds.length + missing.length) {
+      normalizations.add("duplicate_alternative");
+    }
+
     byIndex.set(entry.index, {
       productId: item.productId,
       externalProductId: item.externalProductId,
       quantity,
       reason: item.reason.trim(),
-      // The model's ranking survives for what it named; the rest follow in
-      // resolver order so no swap option disappears from the UI.
-      alternativeIds: [...item.alternativeIds, ...missing],
+      alternativeIds,
     });
   }
 

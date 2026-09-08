@@ -256,3 +256,25 @@ it("returns only the needs the model named", () => {
   expect(result.proposal.items).toHaveLength(1);
 });
 
+
+it.each(["Ви заощадите 120 ₴", "Знижки до 15% у вашій чернетці", "Разом 340 грн"])(
+  "rejects a summary stating a price or a discount: %s",
+  (summary) => {
+    const model = DraftProposalSchema.parse({ summary, items: [item()] });
+
+    expect(() => validateProposal(model, input())).toThrow(InvalidProposalError);
+  },
+);
+
+it("keeps a summary that states no server fact", () => {
+  const model = DraftProposalSchema.parse({ summary: "Зібрали звичні покупки.", items: [item()] });
+
+  expect(validateProposal(model, input()).proposal.summary).toBe("Зібрали звичні покупки.");
+});
+
+it("dedupes an alternative the model named more than once", () => {
+  const result = validateProposal(proposal([item({ alternativeIds: ["p-2", "p-2", "p-2"] })]), input());
+
+  expect(result.proposal.items[0].alternativeIds).toEqual(["p-2"]);
+  expect(result.normalizations).toContain("duplicate_alternative");
+});

@@ -1,8 +1,13 @@
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { Output, generateText } from "ai";
 
-import type { DraftModel, DraftModelRequest } from "./draft-agent";
-import { DraftProposalSchema } from "./draft-output";
+import {
+  generateDraftWithModel,
+  type DraftGeneration,
+  type DraftModel,
+  type DraftModelRequest,
+} from "./draft-agent";
+import { DraftProposalSchema, type DraftAgentInput } from "./draft-output";
 
 /** Agent architecture section 11 requires a bounded generation run. */
 export const DEFAULT_GENERATION_TIMEOUT_MS = 30_000;
@@ -16,9 +21,14 @@ export interface GoogleDraftModelOptions {
 }
 
 /**
- * The only file in the repository that imports the AI SDK. It builds one
- * call and returns what came back; validation, retries and fallback all
- * belong to `draft-agent.ts`, which is why that module needs no SDK mock.
+ * The only file in the repository that imports the AI SDK, and the
+ * composition root for the provider. Every dependency points this way:
+ * `draft-agent.ts` knows nothing about this module, so importing the
+ * orchestrator never drags the SDK into the module graph and its tests
+ * need no SDK mock.
+ *
+ * This adapter builds one call and returns what came back; validation,
+ * retries and fallback all belong to `draft-agent.ts`.
  *
  * The provider is constructed explicitly rather than through the ambient
  * `google` singleton so the key is passed in, never read from the
@@ -45,4 +55,17 @@ export function createGoogleDraftModel(options: GoogleDraftModelOptions): DraftM
       return result.output;
     },
   };
+}
+
+/**
+ * The production entry point. `apiKey` and `model` come from `getServerEnv`
+ * at the call site in Task 13, never from `process.env` here. It lives
+ * beside the adapter rather than in `draft-agent.ts` so that the
+ * orchestrator stays provider-free.
+ */
+export async function generateDraft(
+  input: DraftAgentInput,
+  options: GoogleDraftModelOptions,
+): Promise<DraftGeneration> {
+  return generateDraftWithModel(createGoogleDraftModel(options), input);
 }

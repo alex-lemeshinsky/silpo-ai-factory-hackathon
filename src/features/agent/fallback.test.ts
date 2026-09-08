@@ -130,3 +130,23 @@ it("falls back to default reason when no reason codes match known clauses", () =
 
   expect(reason).toBe("Позиція з вашої історії покупок.");
 });
+
+it("orders clauses by the vocabulary's own declaration order", () => {
+  const codes = ["quantity_uncertain", "stable_cycle", "cycle_due"];
+  const reason = buildFallbackItem(resolved({ need: need({ reasonCodes: codes }) })).reason;
+
+  // The first clause is capitalized in the sentence, so compare lowercased.
+  const positionOf = (code: string) => reason.toLowerCase().indexOf(REASON_CLAUSES[code]);
+  const vocabularyOrder = Object.keys(REASON_CLAUSES).filter((code) => codes.includes(code));
+  const positions = vocabularyOrder.map(positionOf);
+
+  expect(positions.every((position) => position >= 0)).toBe(true);
+  expect(positions).toEqual([...positions].sort((a, b) => a - b));
+  expect(reason.startsWith("За вашим звичним циклом")).toBe(true);
+});
+
+it("has no second ordering list that could drift from the vocabulary", () => {
+  const source = readFileSync(join(process.cwd(), "src/features/agent/fallback.ts"), "utf8");
+
+  expect(source).not.toContain("CLAUSE_ORDER");
+});
