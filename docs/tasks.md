@@ -892,24 +892,24 @@ git commit -m "feat: generate drafts with Gemini"
 - Consumes: Tasks 3–12.
 - Produces: `createDraftForUser(userId, mode): Promise<Draft>`; `POST /api/drafts`.
 
-- [ ] **Step 1: Write failing orchestration tests**
+- [x] **Step 1: Write failing orchestration tests**
 
 Assert ordered calls `listTools → cart context → history → normalize → infer → resolve → Gemini → save`; demo banner state; live mode no fallback; expired-slot response; and deterministic fallback after model failure.
 
-- [ ] **Step 2: Confirm failure**
+- [x] **Step 2: Confirm failure**
 
 Run: `pnpm vitest run src/features/drafts/service.test.ts tests/integration/draft-route.test.ts`
 Expected: FAIL.
 
-- [ ] **Step 3: Compose gateways**
+- [x] **Step 3: Compose gateways**
 
 `createSilpoGateway({ mode, userId })` returns either the demo implementation or a composition of live history, cart-context, and catalog gateways. It never changes mode after creation.
 
-- [ ] **Step 4: Implement the service and route**
+- [x] **Step 4: Implement the service and route**
 
 Persist `algorithmVersion`, `trainingCutoff`, normalized reason codes, product price snapshot, and mode. Return HTTP 409 with available slots for `needs_slot`, 401 for reauthorization, and 429 with retry metadata for rate limiting.
 
-- [ ] **Step 5: Verify and commit**
+- [x] **Step 5: Verify and commit**
 
 Run: `pnpm vitest run src/features/drafts/service.test.ts tests/integration/draft-route.test.ts && pnpm typecheck`
 Expected: PASS.
@@ -918,6 +918,8 @@ Expected: PASS.
 git add src/features/silpo/gateway.ts src/features/drafts/service.ts src/app/api/drafts tests/integration/draft-route.test.ts
 git commit -m "feat: orchestrate personal drafts"
 ```
+
+Виконано 2026-09-08. Специфікація: [design](./superpowers/specs/2026-09-08-draft-orchestration-design.md), план: [plan](./superpowers/plans/2026-09-08-draft-orchestration.md). Живий MCP-прогін не виконано — немає авторизованої сесії «Сільпо».
 
 ---
 

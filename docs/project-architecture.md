@@ -178,6 +178,14 @@ export interface SilpoGateway {
 
 Оркеструє gateway, normalizer, predictor, resolver, Gemini і repository. Зберігає `algorithmVersion`, `trainingCutoff`, reason codes, price snapshots і data mode.
 
+`createDraftForUser({ userId, mode, correlationId }, deps)` повертає `Result<DraftRun, DraftFailure>`, де `DraftRun` містить `draft`, `cartContext`, `loyaltyBonusAvailable` і sanitized `generation` (`source`, `attempts`, `normalizations`) для метрик Task 17. Кожен запуск створює нову чернетку з `version: 1`; попередні чернетки лишаються рядками історії.
+
+`createSilpoGateway({ mode, userId, publicBaseUrl })` повертає `SilpoGatewayHandle` — `{ gateway, close() }`. Live-композиція відкриває один read session і lazy write session, який створюється лише за потреби bootstrap кошика. Mode фіксується під час створення; live ніколи не повертає demo gateway.
+
+Demo mode персистує чернетки під синтетичним користувачем `DEMO_USER_ID`, який ідемпотентно створюється перед першим запуском. Це зберігає єдиний шлях персистенції для live і demo.
+
+Деталі — у [специфікації Task 13](./superpowers/specs/2026-09-08-draft-orchestration-design.md).
+
 ### `CartCommitService`
 
 Єдина точка cart write. Перевіряє persisted approval, slot, stock і quantity; зберігає absolute targets до write; виконує write; негайно перечитує кошик; зберігає verified або blocked result.
