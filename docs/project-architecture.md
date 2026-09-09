@@ -87,7 +87,7 @@ src/
     api/auth/silpo/{start,callback}/route.ts
     api/cart/{context,commit}/route.ts
     api/drafts/route.ts
-    api/drafts/[draftId]/approve/route.ts
+    api/drafts/[draftId]/approve/{handlers,route}.ts
     api/backtest/route.ts
     api/demo/diagnostics/route.ts
     dashboard/page.tsx

@@ -186,7 +186,7 @@ Repository validation is defence in depth. It does not repeat product-ranking lo
 
 ## 7. Route and identity
 
-Create `src/app/api/drafts/[draftId]/approve/route.ts` with a dependency-injected handler factory for integration tests. The route is Node.js, dynamic, and non-cacheable.
+Create the dependency-injected handler factory in `src/app/api/drafts/[draftId]/approve/handlers.ts` for integration tests. Keep `route.ts` as a Next.js-valid entrypoint that exports only the Node.js/dynamic segment configuration and `POST` handler. The response is non-cacheable.
 
 The handler:
 
@@ -292,6 +292,7 @@ Create:
 - `src/features/drafts/approval-service.test.ts`
 - `src/components/autopilot/draft-editor.tsx`
 - `src/components/autopilot/draft-editor.test.tsx`
+- `src/app/api/drafts/[draftId]/approve/handlers.ts`
 - `src/app/api/drafts/[draftId]/approve/route.ts`
 - `tests/integration/draft-approval.test.ts`
 

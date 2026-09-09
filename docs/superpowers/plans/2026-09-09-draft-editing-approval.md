@@ -40,7 +40,8 @@
 | `src/features/drafts/repository.test.ts` | Modify | Atomicity, version, ownership, tombstone, retry, and Postgres transaction evidence. |
 | `src/features/drafts/approval-service.ts` | Create | Approval HTTP schemas, pure selection reconstruction, typed failures, and application-service orchestration. |
 | `src/features/drafts/approval-service.test.ts` | Create | Complete selection, replacement mapping, quantity, total, ownership, version, and repository-result behavior. |
-| `src/app/api/drafts/[draftId]/approve/route.ts` | Create | Next.js segment configuration, identity resolution, body parsing, dependency wiring, and HTTP mapping. |
+| `src/app/api/drafts/[draftId]/approve/handlers.ts` | Create | Dependency-injected identity resolution, body parsing, dependency wiring, and HTTP mapping. |
+| `src/app/api/drafts/[draftId]/approve/route.ts` | Create | Next.js-valid segment configuration and `POST` export only. |
 | `tests/integration/draft-approval.test.ts` | Create | Route behavior for demo/live identity, ownership, idempotency, status mapping, headers, and persisted output. |
 | `src/components/autopilot/draft-editor.tsx` | Create | Local editor rows, quantity validation, remove/undo, replacement picker, request submission, and approval callback. |
 | `src/components/autopilot/draft-editor.test.tsx` | Create | T15-01 through T15-09 interaction evidence. |
@@ -959,9 +960,9 @@ Also prove:
 pnpm vitest run tests/integration/draft-approval.test.ts
 ```
 
-Expected: FAIL because `src/app/api/drafts/[draftId]/approve/route.ts` does not exist.
+Expected: FAIL because the approval handler and route do not exist.
 
-- [ ] Create the route with this public dependency boundary:
+- [ ] Create `handlers.ts` with this public dependency boundary, then create `route.ts` as a thin Next.js entrypoint that imports the factory and exports only `dynamic`, `runtime`, and `POST`:
 
 ```ts
 const RESPONSE_HEADERS = {
@@ -1082,13 +1083,19 @@ export function createApproveDraftPostHandler(overrides: Partial<ApprovalHandler
     }
   };
 }
+```
+
+`route.ts` contains only the framework-owned exports:
+
+```ts
+import { createApproveDraftPostHandler } from "./handlers";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 export const POST = createApproveDraftPostHandler();
 ```
 
-Construct every production default lazily, following `src/app/api/drafts/handlers.ts`. Use `z.uuid().safeParse((await context.params).draftId)`. Wrap `request.json()` in its own `try/catch`; malformed JSON is `400`, not `500`. Parse through `DraftApprovalInputSchema` before resolving identity. Use `NextResponse.json` with the shared non-cache/referrer headers for every branch.
+Construct every production default lazily, following `src/app/api/drafts/handlers.ts`. Use `z.uuid().safeParse((await context.params).draftId)`. Wrap `request.json()` in its own `try/catch`; malformed JSON is `400`, not `500`. Parse through `DraftApprovalInputSchema` before resolving identity. Use `NextResponse.json` with the shared non-cache/referrer headers for every branch. Integration tests import the factory from `handlers.ts`, never from the framework-owned route module.
 
 - [ ] Map service codes without inspecting messages:
 
@@ -1781,6 +1788,7 @@ git add \
   src/features/drafts/repository.test.ts \
   src/features/drafts/approval-service.ts \
   src/features/drafts/approval-service.test.ts \
+  src/app/api/drafts/'[draftId]'/approve/handlers.ts \
   src/app/api/drafts/'[draftId]'/approve/route.ts \
   tests/integration/draft-approval.test.ts \
   src/components/autopilot/draft-editor.tsx \

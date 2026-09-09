@@ -120,7 +120,11 @@ describe("DraftEditor", () => {
 
     expect(input).toBeInvalid();
     expect(input).toHaveAccessibleDescription("Кількість має відповідати кроку 1 і не перевищувати запас 10.");
-    expect(screen.getByRole("button", { name: "Додати у кошик “Сільпо”" })).toBeDisabled();
+    const confirm = screen.getByRole("button", { name: "Додати у кошик “Сільпо”" });
+    expect(confirm).toBeDisabled();
+    expect(confirm).toHaveAccessibleDescription(
+      "Кількість має відповідати кроку 1 і не перевищувати запас 10.",
+    );
   });
 
   it("T15-02 disables confirmation for empty input", () => {
@@ -240,6 +244,20 @@ describe("DraftEditor", () => {
     expect(screen.getByRole("spinbutton", { name: "Кількість для Вода" })).toHaveValue(3);
     expect(screen.getByText("Разом 60,00 ₴")).toBeVisible();
     expect(screen.getByRole("button", { name: "Додати у кошик “Сільпо”" })).toBeEnabled();
+  });
+
+  it("T15-04 allows a selected replacement to be changed back to the original item", () => {
+    renderEditor(draft({ items: [item({ alternatives: [alternative()] })] }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Замінити Вода" }));
+    fireEvent.click(screen.getByRole("radio", { name: /Вода 2 л/ }));
+    expect(screen.getByRole("heading", { level: 3, name: "Вода 2 л" })).toBeVisible();
+
+    fireEvent.click(screen.getByRole("button", { name: "Замінити Вода 2 л" }));
+    fireEvent.click(screen.getByRole("radio", { name: /Вода — 20,00 ₴/ }));
+
+    expect(screen.getByRole("heading", { level: 3, name: "Вода" })).toBeVisible();
+    expect(screen.getByText("Разом 40,00 ₴")).toBeVisible();
   });
 
   it("T15-04 replacement with lower stock does not silently cap quantity and disables confirm until adjusted", () => {
@@ -498,6 +516,7 @@ describe("DraftEditor", () => {
       expect(screen.getByRole("button", { name: "Підтверджуємо…" })).toBeVisible();
       expect(screen.getByText("Підтверджуємо…")).toBeVisible();
       expect(confirm).toBeDisabled();
+      expect(confirm).toHaveAccessibleDescription("Зачекайте, чернетка підтверджується.");
 
       resolvePromise({ idempotencyKey: APPROVAL_KEY });
       await waitFor(() => expect(approveDraft).toHaveBeenCalledOnce());
@@ -550,4 +569,3 @@ describe("DraftEditor", () => {
     });
   });
 });
-

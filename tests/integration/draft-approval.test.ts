@@ -29,7 +29,7 @@ import { err, ok } from "@/lib/result";
 import {
   createApproveDraftPostHandler,
   type ApprovalHandlerDeps,
-} from "@/app/api/drafts/[draftId]/approve/route";
+} from "@/app/api/drafts/[draftId]/approve/handlers";
 
 function makeEnv(overrides: Partial<ServerEnv> = {}): ServerEnv {
   return {

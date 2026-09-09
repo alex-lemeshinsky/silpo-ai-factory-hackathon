@@ -977,6 +977,7 @@ git commit -m "feat: add action-first draft dashboard"
 **Files:**
 - Modify: `src/features/drafts/repository.ts`
 - Create: `src/features/drafts/approval-service.ts`
+- Create: `src/app/api/drafts/[draftId]/approve/handlers.ts`
 - Create: `src/app/api/drafts/[draftId]/approve/route.ts`
 - Create: `src/components/autopilot/draft-editor.tsx`
 - Modify: `src/components/autopilot/draft-dashboard.tsx`
@@ -1031,6 +1032,7 @@ git add \
   src/features/drafts/repository.test.ts \
   src/features/drafts/approval-service.ts \
   src/features/drafts/approval-service.test.ts \
+  src/app/api/drafts/'[draftId]'/approve/handlers.ts \
   src/app/api/drafts/'[draftId]'/approve/route.ts \
   tests/integration/draft-approval.test.ts \
   src/components/autopilot/draft-editor.tsx \
@@ -1045,7 +1047,7 @@ git add \
 git commit -m "feat: edit and approve draft baskets"
 ```
 
-Виконано 2026-09-09. Специфікація: [design](./superpowers/specs/2026-09-09-draft-editing-approval-design.md), план: [plan](./superpowers/plans/2026-09-09-draft-editing-approval.md). Approval route не викликає MCP або cart write; live write smoke належить Task 16. Перевірено component/service/repository/integration suites, lint, typecheck, build і responsive layout на 390 px та 1440 px.
+Виконано 2026-09-09. Специфікація: [design](./superpowers/specs/2026-09-09-draft-editing-approval-design.md), план: [plan](./superpowers/plans/2026-09-09-draft-editing-approval.md). Approval route не викликає MCP або cart write; live write smoke належить Task 16. Перевірено component/service/repository/integration suites, lint, typecheck і webpack build. Інтерактивна responsive-перевірка ready-стану на 390 px та 1440 px ще потребує доступного rendered fixture або dashboard data flow.
 
 ---
 

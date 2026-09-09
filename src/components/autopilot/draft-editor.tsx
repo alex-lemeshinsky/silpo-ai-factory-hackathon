@@ -126,14 +126,17 @@ function cannotDecrease(row: EditorRow): boolean {
   return next <= 0 || next < row.selected.step - 1e-9;
 }
 
-function availableAlternatives(row: EditorRow): ProductCandidate[] {
-  return row.source.alternatives.filter(
+function availableAlternatives(row: EditorRow): Array<DraftItem | ProductCandidate> {
+  const alternatives = row.source.alternatives.filter(
     (candidate) =>
       candidate.available &&
       candidate.stock > 0 &&
       candidate.stock >= candidate.step &&
       candidate.productId !== row.selected.productId,
   );
+  return row.selected.productId === row.source.productId
+    ? alternatives
+    : [row.source, ...alternatives];
 }
 
 function displayItem(row: EditorRow): DraftItem {
@@ -298,11 +301,14 @@ export function DraftEditor({ draft, onApproved, approveDraft }: DraftEditorProp
   const activeRows = rows.filter((row) => !row.removed);
   const activeCount = activeRows.length;
   const hasUnresolvedPicker = rows.some((row) => !row.removed && row.picker === "unresolved");
-  const hasInvalidQuantity = rows.some((row) => !row.removed && quantityError(row) !== null);
+  const firstQuantityError = activeRows
+    .map((row) => quantityError(row))
+    .find((message): message is string => message !== null) ?? null;
+  const hasInvalidQuantity = firstQuantityError !== null;
   const isConfirmDisabled = activeCount === 0 || hasUnresolvedPicker || hasInvalidQuantity;
   const confirmDescription = hasUnresolvedPicker
     ? "Спочатку виберіть заміну або скасуйте вибір."
-    : null;
+    : firstQuantityError ?? (submitting ? "Зачекайте, чернетка підтверджується." : null);
   const displayTotal = computeDisplayTotal(rows);
 
   function changeByStep(sourceProductId: string, direction: -1 | 1) {
@@ -384,9 +390,9 @@ export function DraftEditor({ draft, onApproved, approveDraft }: DraftEditorProp
     setRows((prev) =>
       prev.map((row) => {
         if (row.source.productId !== sourceProductId) return row;
-        const candidate = row.source.alternatives.find(
-          (alt) => alt.productId === candidateProductId,
-        );
+        const candidate = candidateProductId === row.source.productId
+          ? row.source
+          : row.source.alternatives.find((alt) => alt.productId === candidateProductId);
         if (!candidate) return row;
         return {
           ...row,
