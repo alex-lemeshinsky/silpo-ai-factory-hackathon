@@ -924,4 +924,176 @@ describe("DraftRepository (postgres)", () => {
       promotions: [{ id: "promo-1", label: "Акція", price: 45 }],
     })]);
   });
+
+  it("records commit outcome in postgres without version bump", async () => {
+    const updateFn = vi.fn(() => ({
+      where: vi.fn(async () => []),
+    }));
+    const selectFn = vi.fn(() => ({
+      from: vi.fn(() => ({
+        where: vi.fn(() => ({
+          limit: vi.fn(async () => [{ status: "confirming" }]),
+        })),
+      })),
+    }));
+    const mockDb = {
+      select: selectFn,
+      update: vi.fn(() => ({
+        set: updateFn,
+      })),
+    } as unknown as DbClient;
+
+    const repo = createPostgresDraftRepository(mockDb);
+    const result = await repo.recordCommitOutcome({
+      draftId: editableDraftFixture.id,
+      userId: "user-1",
+      status: "verified",
+    });
+
+    expect(result).toBe("updated");
+    expect(updateFn).toHaveBeenCalledWith(expect.objectContaining({
+      status: "verified",
+    }));
+  });
+
+  it("returns not_found in postgres for missing draft", async () => {
+    const mockDb = {
+      select: vi.fn(() => ({
+        from: vi.fn(() => ({
+          where: vi.fn(() => ({
+            limit: vi.fn(async () => []),
+          })),
+        })),
+      })),
+    } as unknown as DbClient;
+
+    const repo = createPostgresDraftRepository(mockDb);
+    const result = await repo.recordCommitOutcome({
+      draftId: "missing-id",
+      userId: "user-1",
+      status: "verified",
+    });
+    expect(result).toBe("not_found");
+  });
+
+  it("returns conflict in postgres for unapproved draft", async () => {
+    const mockDb = {
+      select: vi.fn(() => ({
+        from: vi.fn(() => ({
+          where: vi.fn(() => ({
+            limit: vi.fn(async () => [{ status: "ready" }]),
+          })),
+        })),
+      })),
+    } as unknown as DbClient;
+
+    const repo = createPostgresDraftRepository(mockDb);
+    const result = await repo.recordCommitOutcome({
+      draftId: editableDraftFixture.id,
+      userId: "user-1",
+      status: "verified",
+    });
+    expect(result).toBe("conflict");
+  });
+});
+
+describe("recordCommitOutcome (in-memory)", () => {
+  const USER = "user-1";
+  const readyDraft = editableDraftFixture;
+
+  it("moves a confirming draft to a terminal status without changing its version", async () => {
+    const repository = createInMemoryDraftRepository();
+    await repository.save(USER, readyDraft);
+    await repository.approveSelection(approvalMutation());
+
+    const outcome = await repository.recordCommitOutcome({
+      draftId: readyDraft.id,
+      userId: USER,
+      status: "verified",
+    });
+
+    expect(outcome).toBe("updated");
+    const stored = await repository.get(readyDraft.id, USER);
+    expect(stored?.status).toBe("verified");
+    expect(stored?.version).toBe(readyDraft.version + 1);
+  });
+
+  it("keeps removed decisions as tombstones", async () => {
+    const repository = createInMemoryDraftRepository();
+    await repository.save(USER, readyDraft);
+    await repository.approveSelection(approvalMutation());
+
+    await repository.recordCommitOutcome({ draftId: readyDraft.id, userId: USER, status: "blocked" });
+    const stored = await repository.get(readyDraft.id, USER);
+    expect(stored?.items.map((entry) => entry.productId)).toEqual(["product-1", "product-2-alt"]);
+    expect(await repository.getApproval(readyDraft.id, USER)).not.toBeNull();
+  });
+
+  it("does not change item quantities or prices", async () => {
+    const repository = createInMemoryDraftRepository();
+    await repository.save(USER, readyDraft);
+    await repository.approveSelection(approvalMutation());
+
+    const before = await repository.get(readyDraft.id, USER);
+    await repository.recordCommitOutcome({ draftId: readyDraft.id, userId: USER, status: "partially_committed" });
+    const after = await repository.get(readyDraft.id, USER);
+    expect(after?.items).toEqual(before?.items);
+    expect(after?.total).toBe(before?.total);
+  });
+
+  it("returns not_found for an unknown draft", async () => {
+    const repository = createInMemoryDraftRepository();
+    await expect(repository.recordCommitOutcome({
+      draftId: "11111111-1111-4111-8111-111111111111",
+      userId: USER,
+      status: "verified",
+    })).resolves.toBe("not_found");
+  });
+
+  it("returns not_found for a draft owned by someone else", async () => {
+    const repository = createInMemoryDraftRepository();
+    await repository.save(USER, readyDraft);
+    await repository.approveSelection(approvalMutation());
+
+    await expect(repository.recordCommitOutcome({
+      draftId: readyDraft.id,
+      userId: "another-user",
+      status: "verified",
+    })).resolves.toBe("not_found");
+  });
+
+  it("returns conflict for a draft that was never approved", async () => {
+    const repository = createInMemoryDraftRepository();
+    await repository.save(USER, readyDraft);
+    await expect(repository.recordCommitOutcome({
+      draftId: readyDraft.id,
+      userId: USER,
+      status: "verified",
+    })).resolves.toBe("conflict");
+  });
+
+  it("is idempotent across repeated identical outcomes", async () => {
+    const repository = createInMemoryDraftRepository();
+    await repository.save(USER, readyDraft);
+    await repository.approveSelection(approvalMutation());
+
+    await repository.recordCommitOutcome({ draftId: readyDraft.id, userId: USER, status: "verified" });
+    await expect(repository.recordCommitOutcome({
+      draftId: readyDraft.id,
+      userId: USER,
+      status: "verified",
+    })).resolves.toBe("updated");
+  });
+
+  it("rejects a status that is not a terminal commit status", async () => {
+    const repository = createInMemoryDraftRepository();
+    await repository.save(USER, readyDraft);
+    await repository.approveSelection(approvalMutation());
+
+    await expect(repository.recordCommitOutcome({
+      draftId: readyDraft.id,
+      userId: USER,
+      status: "ready" as unknown as "verified",
+    })).rejects.toThrow();
+  });
 });

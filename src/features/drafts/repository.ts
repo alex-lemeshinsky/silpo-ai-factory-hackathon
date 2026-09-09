@@ -47,6 +47,14 @@ export type PersistDraftApprovalResult =
   | { status: "not_found" }
   | { status: "conflict" };
 
+export interface RecordCommitOutcomeInput {
+  draftId: string;
+  userId: string;
+  status: "verified" | "partially_committed" | "blocked";
+}
+
+export type RecordCommitOutcomeResult = "updated" | "not_found" | "conflict";
+
 export interface SaveDraftOptions {
   expectedVersion?: number;
 }
@@ -56,9 +64,32 @@ export interface DraftRepository {
   get(draftId: string, userId: string): Promise<Draft | null>;
   getApproval(draftId: string, userId: string): Promise<DraftApprovalRecord | null>;
   approveSelection(input: PersistDraftApprovalInput): Promise<PersistDraftApprovalResult>;
+  recordCommitOutcome?(input: RecordCommitOutcomeInput): Promise<RecordCommitOutcomeResult>;
 }
 
+export type CompleteDraftRepository = DraftRepository & {
+  recordCommitOutcome(input: RecordCommitOutcomeInput): Promise<RecordCommitOutcomeResult>;
+};
+
 const nonEmptyString = z.string().trim().min(1);
+
+const recordCommitOutcomeInputSchema = z.object({
+  draftId: nonEmptyString,
+  userId: nonEmptyString,
+  status: z.enum(["verified", "partially_committed", "blocked"]),
+}).strict();
+
+/**
+ * A commit outcome may only land on a draft that was approved. Allowing the
+ * terminal statuses too keeps a replayed commit from reporting a conflict for
+ * work that already succeeded.
+ */
+const COMMITTABLE_STATUSES = new Set([
+  "confirming",
+  "verified",
+  "partially_committed",
+  "blocked",
+]);
 const draftApprovalRecordSchema = z.object({
   id: nonEmptyString.optional(),
   draftId: nonEmptyString,
@@ -169,7 +200,7 @@ interface MemoryDraftRow {
   }>;
 }
 
-export function createInMemoryDraftRepository(): DraftRepository {
+export function createInMemoryDraftRepository(): CompleteDraftRepository {
   const draftsById = new Map<string, MemoryDraftRow>();
   const approvalsByDraftId = new Map<string, DraftApprovalRecord>();
   const draftIdByKey = new Map<string, string>();
@@ -311,10 +342,24 @@ export function createInMemoryDraftRepository(): DraftRepository {
       if (!record || record.userId !== nonEmptyString.parse(userId)) return null;
       return draftApprovalRecordSchema.parse(structuredClone(record));
     },
+
+    async recordCommitOutcome(input: RecordCommitOutcomeInput): Promise<RecordCommitOutcomeResult> {
+      const parsed = recordCommitOutcomeInputSchema.parse(input);
+      const row = draftsById.get(parsed.draftId);
+      if (!row || row.userId !== parsed.userId) {
+        return "not_found";
+      }
+      if (!COMMITTABLE_STATUSES.has(row.draft.status)) {
+        return "conflict";
+      }
+      // Status only: version, items, and decision tombstones are untouched.
+      row.draft = { ...row.draft, status: parsed.status };
+      return "updated";
+    },
   };
 }
 
-export function createPostgresDraftRepository(db: DbClient): DraftRepository {
+export function createPostgresDraftRepository(db: DbClient): CompleteDraftRepository {
   return {
     async save(userId: string, draft: Draft, options?: SaveDraftOptions): Promise<Draft> {
       const parsedUserId = nonEmptyString.parse(userId);
@@ -608,6 +653,32 @@ export function createPostgresDraftRepository(db: DbClient): DraftRepository {
         idempotencyKey: record.idempotencyKey,
         createdAt: record.createdAt,
       });
+    },
+
+    async recordCommitOutcome(input: RecordCommitOutcomeInput): Promise<RecordCommitOutcomeResult> {
+      const parsed = recordCommitOutcomeInputSchema.parse(input);
+
+      const [existing] = await db
+        .select({ status: drafts.status })
+        .from(drafts)
+        .where(and(eq(drafts.id, parsed.draftId), eq(drafts.userId, parsed.userId)))
+        .limit(1);
+
+      if (!existing) {
+        return "not_found";
+      }
+      if (!COMMITTABLE_STATUSES.has(existing.status ?? "")) {
+        return "conflict";
+      }
+
+      // No version bump and no `draft_items` write: Task 15's removed-decision
+      // rows must survive a commit outcome.
+      await db
+        .update(drafts)
+        .set({ status: parsed.status, updatedAt: new Date() })
+        .where(and(eq(drafts.id, parsed.draftId), eq(drafts.userId, parsed.userId)));
+
+      return "updated";
     },
   };
 }

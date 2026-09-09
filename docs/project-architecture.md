@@ -306,6 +306,12 @@ Removed rows remain decision tombstones but normal draft reads return only activ
 10. Зберегти `verified` або `blocked` result.
 11. Повернути web/mobile checkout links лише без error validations.
 
+- Каталожне оновлення виконується на кожній спробі, але лише перша визначає absolute targets. На повторі targets беруться з persisted record, а оновлення дає тільки validations.
+- Пре-write коригування (`unavailable_product`, `stock_capped`, `step_adjusted`, `price_changed`) є warning-ами: вони не блокують write, але унеможливлюють статус `verified`.
+- Severity з Silpo мапиться так: `warning` — попередження, будь-яке інше або невідоме значення — помилка.
+- `silpo_add_or_update_cart_products` потребує `branchId`, якого немає в `SetCartProductsInput`, тому gateway спершу читає кошик. Це read-only виклик; сам write не має retry.
+- Чернетка, у якій жодну позицію не вдалося підтвердити, дає `blocked` без write і без commit record, оскільки `cart_commits.target_quantities` не приймає порожню мапу.
+
 Після невизначеного network result повтор використовує вже збережені absolute targets. Він не додає approved quantity до оновленого кошика вдруге.
 
 ## 8. Дані
@@ -351,6 +357,7 @@ Removed rows remain decision tombstones but normal draft reads return only activ
 - `unavailable_product`: replacement або remove;
 - `cart_validation_error`: blocked result без checkout;
 - `partial_commit`: per-item status і user action;
+- `commit_uncertain`: результат запису невідомий; повтор із тим самим ключем використовує збережені absolute targets;
 - `model_invalid_output`: максимум дві model-спроби, потім deterministic fallback;
 - `unexpected`: correlation ID і safe message без secrets.
 

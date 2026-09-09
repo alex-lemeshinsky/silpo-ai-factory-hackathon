@@ -98,3 +98,65 @@ describe("DeliveryAddressesSchema", () => {
     expect(DeliveryAddressesSchema.parse({ addresses: [] }).addresses).toEqual([]);
   });
 });
+
+const cartWithLines = {
+  id: "cart-1",
+  branchId: "branch-1",
+  deliveryType: "DeliveryHome",
+  timeslot: { id: "slot-1", start: "2026-09-09T10:00:00Z", end: "2026-09-09T12:00:00Z" },
+  address: null,
+  shipments: [],
+  total: 124.4,
+  validations: [],
+  products: [
+    { productId: "p-1", quantity: 2, price: 24.9, specialPrice: 19.9, available: true },
+    { productId: "p-2", quantity: 1, price: 74.6 },
+  ],
+  checkout: { webUrl: "https://silpo.ua/cart/cart-1", mobileUrl: "https://silpo.ua/app/cart/cart-1" },
+};
+
+describe("ShoppingCartSchema cart lines", () => {
+  it("parses product lines and defaults optional line fields", () => {
+    const parsed = ShoppingCartSchema.parse(cartWithLines);
+    expect(parsed.products).toEqual([
+      { productId: "p-1", quantity: 2, price: 24.9, specialPrice: 19.9, available: true },
+      { productId: "p-2", quantity: 1, price: 74.6, specialPrice: null, available: true },
+    ]);
+  });
+
+  it("defaults an absent product list and checkout to empty rather than failing", () => {
+    const withoutNewFields = Object.fromEntries(
+      Object.entries(cartWithLines).filter(([k]) => k !== "products" && k !== "checkout"),
+    );
+    const parsed = ShoppingCartSchema.parse(withoutNewFields);
+    expect(parsed.products).toEqual([]);
+    expect(parsed.checkout).toBeNull();
+  });
+
+  it("parses checkout links verbatim without judging their scheme", () => {
+    const parsed = ShoppingCartSchema.parse(cartWithLines);
+    expect(parsed.checkout).toEqual({
+      webUrl: "https://silpo.ua/cart/cart-1",
+      mobileUrl: "https://silpo.ua/app/cart/cart-1",
+    });
+  });
+
+  it("rejects a mistyped line quantity rather than coercing it", () => {
+    const broken = { ...cartWithLines, products: [{ productId: "p-1", quantity: "2", price: 24.9 }] };
+    expect(() => ShoppingCartSchema.parse(broken)).toThrow();
+  });
+
+  it("rejects a line without a product ID rather than guessing", () => {
+    const broken = { ...cartWithLines, products: [{ quantity: 2, price: 24.9 }] };
+    expect(() => ShoppingCartSchema.parse(broken)).toThrow();
+  });
+
+  it("tolerates unknown keys inside a product line", () => {
+    const extended = {
+      ...cartWithLines,
+      products: [{ productId: "p-1", quantity: 2, price: 24.9, loyaltyLabel: "нове" }],
+    };
+    expect(ShoppingCartSchema.parse(extended).products[0].productId).toBe("p-1");
+  });
+});
+

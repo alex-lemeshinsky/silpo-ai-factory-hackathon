@@ -7,7 +7,6 @@ import {
   createLazyWriteSession,
   createSilpoGateway,
   DRAFT_MCP_OPERATION_TIMEOUT_MS,
-  NotImplementedForDraftRunError,
   type SilpoGatewayDeps,
 } from "./gateway";
 import type { McpSession, OpenSessionOptions } from "./live/session";
@@ -206,16 +205,6 @@ describe("createSilpoGateway", () => {
     await expect(handle.close()).resolves.toBeUndefined();
     expect(read.closeCount).toBe(1);
   });
-
-  it("refuses the two cart-write methods that belong to Task 16", async () => {
-    const { options } = liveOptions();
-    const handle = await createSilpoGateway(options);
-
-    await expect(handle.gateway.readCart("cart-1")).rejects.toThrow(NotImplementedForDraftRunError);
-    await expect(
-      handle.gateway.setAbsoluteCartQuantities({ cartId: "cart-1", items: [{ productId: "p", quantity: 1 }], addQuantity: false }),
-    ).rejects.toThrow(NotImplementedForDraftRunError);
-  });
 });
 
 /**
@@ -243,7 +232,11 @@ describe("createSilpoGateway live composition", () => {
     "silpo_get_my_online_orders",
     "silpo_get_my_offline_orders",
   ];
-  const WRITE_TOOLS = ["silpo_create_shopping_cart", "silpo_update_shopping_cart"];
+  const WRITE_TOOLS = [
+    "silpo_create_shopping_cart",
+    "silpo_update_shopping_cart",
+    "silpo_add_or_update_cart_products",
+  ];
 
   const activeSlot = {
     id: "slot-1",
@@ -321,7 +314,10 @@ describe("createSilpoGateway live composition", () => {
     const read = cannedSession(READ_TOOLS, readHandlers, true);
     const write = cannedSession(
       WRITE_TOOLS,
-      { silpo_create_shopping_cart: () => ({ cartId: "cart-1" }) },
+      {
+        silpo_create_shopping_cart: () => ({ cartId: "cart-1" }),
+        silpo_add_or_update_cart_products: () => ({ ok: true }),
+      },
       false,
     );
     const openWriteSession = vi.fn(async () => write as McpSession);
@@ -425,5 +421,20 @@ describe("createSilpoGateway live composition", () => {
 
     expect(receipts).toHaveLength(1);
     expect(receipts[0]).toMatchObject({ sourceId: "order-1", channel: "online", city: "Київ" });
+  });
+
+  it("routes cart writes and readbacks to the live cart gateway", async () => {
+    const { handle: handlePromise, write: writeSession } = compose(existingCartHandlers);
+    const handle = await handlePromise;
+
+    const cart = await handle.gateway.readCart("cart-1");
+    expect(cart.cartId).toBe("cart-1");
+
+    await handle.gateway.setAbsoluteCartQuantities({
+      cartId: "cart-1",
+      items: [{ productId: "p-1", quantity: 2 }],
+      addQuantity: false,
+    });
+    expect(writeSession.calls).toContain("silpo_add_or_update_cart_products");
   });
 });

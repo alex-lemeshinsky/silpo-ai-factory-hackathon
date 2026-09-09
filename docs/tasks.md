@@ -1054,17 +1054,32 @@ git commit -m "feat: edit and approve draft baskets"
 ### Task 16: Idempotent live cart commit and verification
 
 **Files:**
+- Modify: `src/features/silpo/schemas/cart.ts`
+- Modify: `src/features/silpo/schemas/cart.test.ts`
 - Create: `src/features/silpo/live/cart.ts`
+- Create: `src/features/silpo/live/cart.test.ts`
+- Create: `tests/contract/silpo-cart-write.test.ts`
+- Modify: `src/features/silpo/gateway.ts`
+- Modify: `src/features/silpo/gateway.test.ts`
+- Create: `src/features/cart/plan.ts`
+- Create: `src/features/cart/plan.test.ts`
+- Create: `src/features/cart/reconcile.ts`
+- Create: `src/features/cart/reconcile.test.ts`
+- Modify: `src/features/drafts/repository.ts`
+- Modify: `src/features/drafts/repository.test.ts`
 - Create: `src/features/cart/commit-service.ts`
+- Create: `src/features/cart/commit-service.test.ts`
+- Create: `src/app/api/cart/commit/handlers.ts`
 - Create: `src/app/api/cart/commit/route.ts`
-- Test: `src/features/cart/commit-service.test.ts`
-- Test: `tests/integration/cart-commit-route.test.ts`
+- Create: `tests/integration/cart-commit-route.test.ts`
+- Modify: `docs/project-architecture.md`
+- Modify: `docs/tasks.md`
 
 **Interfaces:**
 - Consumes: approved draft and idempotency key.
 - Produces: `commitApprovedDraft(input): Promise<VerifiedCart>`; `POST /api/cart/commit`.
 
-- [ ] **Step 1: Write failing safety tests**
+- [x] **Step 1: Write failing safety tests**
 
 ```ts
 it("does not write without persisted approval", async () => {
@@ -1083,28 +1098,49 @@ it("does not double-add after an uncertain first result", async () => {
 
 Also test mandatory slot validation, stock cap with warning, package step, bag exclusion, partial validation failure, and hidden checkout on errors.
 
-- [ ] **Step 2: Confirm failure**
+- [x] **Step 2: Confirm failure**
 
 Run: `pnpm vitest run src/features/cart/commit-service.test.ts tests/integration/cart-commit-route.test.ts`
 Expected: FAIL.
 
-- [ ] **Step 3: Implement the live cart gateway**
+- [x] **Step 3: Implement the live cart gateway**
 
 Map `get_shopping_cart_by_id`, `get_time_slots`, and `add_or_update_cart_products`. Use `addQuantity=false`. Immediately call cart readback after every write and map all validations.
 
-- [ ] **Step 4: Implement commit protocol**
+- [x] **Step 4: Implement commit protocol**
 
 Order: validate approval → load/reuse commit record → read cart → validate slot → refresh products → calculate and persist absolute targets → write → read cart → save verified/blocked result. A retry uses persisted targets. Return web and mobile checkout links only when error validations are empty.
 
-- [ ] **Step 5: Verify and commit**
+- [x] **Step 5: Verify and commit**
 
 Run: `pnpm vitest run src/features/cart/commit-service.test.ts tests/integration/cart-commit-route.test.ts && pnpm typecheck`
 Expected: PASS.
 
 ```bash
-git add src/features/silpo/live/cart.ts src/features/cart/commit-service.ts src/features/cart/commit-service.test.ts src/app/api/cart/commit tests/integration/cart-commit-route.test.ts
+git add \
+  src/features/silpo/schemas/cart.ts \
+  src/features/silpo/schemas/cart.test.ts \
+  src/features/silpo/live/cart.ts \
+  src/features/silpo/live/cart.test.ts \
+  src/features/silpo/gateway.ts \
+  src/features/silpo/gateway.test.ts \
+  src/features/cart/plan.ts \
+  src/features/cart/plan.test.ts \
+  src/features/cart/reconcile.ts \
+  src/features/cart/reconcile.test.ts \
+  src/features/cart/commit-service.ts \
+  src/features/cart/commit-service.test.ts \
+  src/features/drafts/repository.ts \
+  src/features/drafts/repository.test.ts \
+  src/app/api/cart/commit \
+  tests/contract/silpo-cart-write.test.ts \
+  tests/integration/cart-commit-route.test.ts \
+  docs/project-architecture.md \
+  docs/tasks.md
 git commit -m "feat: commit verified Silpo carts"
 ```
+
+Виконано 2026-09-09. Специфікація: [spec](./superpowers/specs/2026-09-09-live-cart-commit-design.md), план: [plan](./superpowers/plans/2026-09-09-live-cart-commit.md). Реалізовано ідемпотентний live cart commit: pre-write перевірка approval, slot validation, розрахунок і збереження absolute targets (`addQuantity=false`), readback-верифікація, узгодження результатів (`verified`, `partially_committed`, `blocked`) та маршрут `POST /api/cart/commit`. Перевірено focused tests, cumulative tests, lint, typecheck і webpack build. Перенесені ризики: непідтверджені на live-сервері точні назви полів рядків та checkout у схемі кошика Silpo (потребує live MCP inspection з реальними credentials) та відсутність клієнтської реалізації (unowned client story для commit flow), яка блокує Task 18. Live cart write smoke не виконувався без явного ручного підтвердження.
 
 ---
 

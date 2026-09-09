@@ -58,6 +58,25 @@ export const CartValidationSchema = z.object({
   productId: nonEmptyString.nullable().default(null),
 });
 
+export const CartProductLineSchema = z.object({
+  productId: nonEmptyString,
+  quantity: z.number().finite().nonnegative(),
+  price: money,
+  specialPrice: money.nullable().default(null),
+  available: z.boolean().default(true),
+});
+export type SilpoCartProductLine = z.infer<typeof CartProductLineSchema>;
+
+/**
+ * Checkout targets are copied verbatim. Whether a link may be shown is a
+ * domain rule enforced by `VerifiedCartSchema`, not a parsing rule.
+ */
+export const CartCheckoutSchema = z.object({
+  webUrl: nonEmptyString.nullable().default(null),
+  mobileUrl: nonEmptyString.nullable().default(null),
+});
+export type SilpoCartCheckout = z.infer<typeof CartCheckoutSchema>;
+
 export const ShoppingCartSchema = z.object({
   id: nonEmptyString,
   branchId: nonEmptyString.nullable().default(null),
@@ -68,6 +87,8 @@ export const ShoppingCartSchema = z.object({
   shipments: z.array(z.unknown()).default([]),
   total: money,
   validations: z.array(CartValidationSchema).default([]),
+  products: z.array(CartProductLineSchema).default([]),
+  checkout: CartCheckoutSchema.nullable().default(null),
 });
 export type SilpoShoppingCart = z.infer<typeof ShoppingCartSchema>;
 

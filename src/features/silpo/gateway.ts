@@ -21,13 +21,7 @@ import type { SilpoOAuthProvider } from "./oauth/transport";
  */
 export const DRAFT_MCP_OPERATION_TIMEOUT_MS = 60_000;
 
-/** A cart-write method that has no gateway until Task 16 implements it. */
-export class NotImplementedForDraftRunError extends Error {
-  constructor(readonly method: string) {
-    super(`${method} belongs to Task 16 and is never called by a draft run`);
-    this.name = "NotImplementedForDraftRunError";
-  }
-}
+import { createLiveCartGateway } from "./live/cart";
 
 export interface SilpoGatewayHandle {
   gateway: SilpoGateway;
@@ -62,9 +56,8 @@ export interface LazyWriteSession {
  * A write session that exists only if something writes.
  *
  * `createLiveCartContextGateway` takes both sessions at construction, but
- * the only write a draft run can reach is bootstrapping a cart for a guest
- * who has none. Opening eagerly would spend a round trip and a live token
- * use on every run for a branch almost none of them take.
+ * the writes a session can reach are cart bootstrapping and the cart commit,
+ * and neither happens on most draft runs, so the session is still opened lazily.
  *
  * `retryEnabled` is the literal `false` that `openWriteSession` always
  * sets, so answering it needs no session. `advertisedTools` delegates to
@@ -127,6 +120,10 @@ async function createLiveGatewayHandle(
     now: deps.now,
   });
   const catalog = createLiveCatalogGateway({ readSession });
+  const cartWrite = createLiveCartGateway({
+    readSession,
+    writeSession: lazyWrite.session,
+  });
 
   const gateway: SilpoGateway = {
     // A cached read of the `tools/list` the session already performed
@@ -144,12 +141,8 @@ async function createLiveGatewayHandle(
     getSimilarProducts: (context, slug) => catalog.getSimilarProducts(context, slug),
     getReplacements: (context, slug) => catalog.getReplacements(context, slug),
     getTimeSlots: (context) => cart.getTimeSlots(context),
-    async setAbsoluteCartQuantities() {
-      throw new NotImplementedForDraftRunError("setAbsoluteCartQuantities");
-    },
-    async readCart() {
-      throw new NotImplementedForDraftRunError("readCart");
-    },
+    setAbsoluteCartQuantities: (input) => cartWrite.setAbsoluteCartQuantities(input),
+    readCart: (cartId) => cartWrite.readCart(cartId),
   };
 
   return {
