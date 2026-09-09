@@ -1,9 +1,14 @@
 import { randomUUID } from "node:crypto";
-import type { NextRequest } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 
 import { getDbClient } from "@/db/client";
 import { generateDraft } from "@/features/agent/google-model";
-import { ensureDemoUser } from "@/features/drafts/demo-user";
+import {
+  DEMO_SESSION_COOKIE,
+  DEMO_SESSION_MAX_AGE_SECONDS,
+  ensureDemoUser,
+  type DemoIdentity,
+} from "@/features/drafts/demo-user";
 import { createPostgresDraftRepository, type DraftRepository } from "@/features/drafts/repository";
 import { createDraftForUser, type CreateDraftDeps } from "@/features/drafts/service";
 import { createSilpoGateway } from "@/features/silpo/gateway";
@@ -32,54 +37,60 @@ const STATUS_BY_CODE: Record<AppErrorCode, number> = {
 /**
  * Every dependency is a field with a production default, because the
  * integration test runs without a database, without a network and without
- * an API key. `repository` and `resolveDemoUserId` are thunks so the
- * database client is built at call time rather than at module load.
+ * an API key. `repository` and `resolveDemoIdentity` are thunks so the
+ * database client is built at call time rather than at module load, and
+ * every default reads the environment through `getEnv` so overriding it
+ * cannot leave one dependency talking to the real one.
  */
 export interface DraftsHandlerDeps {
   getEnv: () => ServerEnv;
   resolveSession: (handle: string | null) => Promise<Result<{ userId: string }, AppError>>;
-  resolveDemoUserId: () => Promise<string>;
+  resolveDemoIdentity: (cookieValue: string | null) => Promise<DemoIdentity>;
   repository: () => DraftRepository;
   openGateway: CreateDraftDeps["openGateway"];
   generateDraft: CreateDraftDeps["generateDraft"];
 }
 
-const productionDeps: DraftsHandlerDeps = {
-  getEnv: () => getServerEnv(),
-  resolveSession: (handle) => resolveSilpoSession(handle),
-  resolveDemoUserId: () => ensureDemoUser(getDbClient()),
-  repository: () => createPostgresDraftRepository(getDbClient()),
-  openGateway: ({ mode, userId }) =>
-    createSilpoGateway({ mode, userId, publicBaseUrl: getServerEnv().PUBLIC_BASE_URL }),
-  generateDraft: (input) => {
-    const env = getServerEnv();
-    return generateDraft(input, {
-      apiKey: env.GOOGLE_GENERATIVE_AI_API_KEY,
-      model: env.AGENT_MODEL,
-    });
-  },
-};
-
-function fail(status: number, error: AppError, extra: Record<string, unknown> = {}): Response {
-  return Response.json({ error, ...extra }, { status, headers });
+function fail(status: number, error: AppError, extra: Record<string, unknown> = {}): NextResponse {
+  return NextResponse.json({ error, ...extra }, { status, headers });
 }
 
 export function createDraftsPostHandler(overrides: Partial<DraftsHandlerDeps> = {}) {
-  const deps: DraftsHandlerDeps = { ...productionDeps, ...overrides };
+  const getEnv = overrides.getEnv ?? (() => getServerEnv());
+  const deps: DraftsHandlerDeps = {
+    getEnv,
+    resolveSession: (handle) => resolveSilpoSession(handle),
+    resolveDemoIdentity: (cookieValue) => ensureDemoUser(getDbClient(), cookieValue),
+    repository: () => createPostgresDraftRepository(getDbClient()),
+    openGateway: ({ mode, userId }) =>
+      createSilpoGateway({ mode, userId, publicBaseUrl: getEnv().PUBLIC_BASE_URL }),
+    generateDraft: (input) => {
+      const env = getEnv();
+      return generateDraft(input, {
+        apiKey: env.GOOGLE_GENERATIVE_AI_API_KEY,
+        model: env.AGENT_MODEL,
+      });
+    },
+    ...overrides,
+  };
 
-  return async function POST(request: NextRequest): Promise<Response> {
+  return async function POST(request: NextRequest): Promise<NextResponse> {
     const correlationId = randomUUID();
 
     try {
       // The run takes no client input at all: no body is read, no query
       // parameter is consulted. Mode comes from the environment and the
-      // identity from the server-side session.
+      // identity from a server-side session or a server-issued demo handle.
       const env = deps.getEnv();
       const mode = env.DATA_MODE;
 
       let userId: string;
+      let demoIdentity: DemoIdentity | null = null;
       if (mode === "demo") {
-        userId = await deps.resolveDemoUserId();
+        demoIdentity = await deps.resolveDemoIdentity(
+          request.cookies.get(DEMO_SESSION_COOKIE)?.value ?? null,
+        );
+        userId = demoIdentity.userId;
       } else {
         const handle = request.cookies.get("silpo_session")?.value ?? null;
         const session = await deps.resolveSession(handle);
@@ -94,6 +105,24 @@ export function createDraftsPostHandler(overrides: Partial<DraftsHandlerDeps> = 
         userId = session.value.userId;
       }
 
+      /**
+       * Attached to whatever this request returns, success or failure, so a
+       * visitor whose run failed is not handed a new identity — and a new
+       * `users` row — on every retry.
+       */
+      const withDemoCookie = (response: NextResponse): NextResponse => {
+        if (demoIdentity?.issued === true) {
+          response.cookies.set(DEMO_SESSION_COOKIE, demoIdentity.handle, {
+            httpOnly: true,
+            sameSite: "lax",
+            path: "/",
+            secure: env.NODE_ENV === "production",
+            maxAge: DEMO_SESSION_MAX_AGE_SECONDS,
+          });
+        }
+        return response;
+      };
+
       const result = await createDraftForUser(
         { userId, mode, correlationId },
         {
@@ -105,18 +134,18 @@ export function createDraftsPostHandler(overrides: Partial<DraftsHandlerDeps> = 
 
       if (!result.ok) {
         const { error, availableSlots } = result.error;
-        return fail(
+        return withDemoCookie(fail(
           STATUS_BY_CODE[error.code],
           error,
           availableSlots === null ? {} : { availableSlots },
-        );
+        ));
       }
 
       const { draft, cartContext, loyaltyBonusAvailable } = result.value;
-      return Response.json(
+      return withDemoCookie(NextResponse.json(
         { mode, draft, cartContext, loyaltyBonusAvailable },
         { status: 200, headers },
-      );
+      ));
     } catch {
       // Environment, database and wiring faults. The cause is never echoed.
       return fail(500, {

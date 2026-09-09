@@ -2,6 +2,11 @@ import { NextRequest } from "next/server";
 import { describe, expect, it, vi } from "vitest";
 
 import { buildFallbackProposal } from "@/features/agent/fallback";
+import {
+  createDemoHandle,
+  demoUserIdFor,
+  isDemoHandle,
+} from "@/features/drafts/demo-user";
 import { createInMemoryDraftRepository } from "@/features/drafts/repository";
 import { createDemoSilpoGateway } from "@/features/silpo/demo/demo-gateway";
 import { McpCallError } from "@/features/silpo/live/session";
@@ -24,12 +29,17 @@ function makeEnv(overrides: Partial<ServerEnv> = {}): ServerEnv {
   };
 }
 
+const DEMO_HANDLE = createDemoHandle();
+
 function makeDeps(overrides: Partial<DraftsHandlerDeps> = {}): DraftsHandlerDeps {
   const repository = createInMemoryDraftRepository();
   return {
     getEnv: () => makeEnv(),
     resolveSession: async () => ok({ userId: "live-user" }),
-    resolveDemoUserId: async () => "00000000-0000-4000-8000-00000000de10",
+    resolveDemoIdentity: async (cookieValue) =>
+      isDemoHandle(cookieValue)
+        ? { userId: demoUserIdFor(cookieValue), handle: cookieValue, issued: false }
+        : { userId: demoUserIdFor(DEMO_HANDLE), handle: DEMO_HANDLE, issued: true },
     repository: () => repository,
     openGateway: async () => ({ gateway: createDemoSilpoGateway(), async close() {} }),
     generateDraft: async (input) => ({
@@ -42,10 +52,11 @@ function makeDeps(overrides: Partial<DraftsHandlerDeps> = {}): DraftsHandlerDeps
   };
 }
 
-function post(body?: unknown, cookie?: string): NextRequest {
+function post(body?: unknown, cookies: Record<string, string> = {}): NextRequest {
   const headers = new Headers({ "content-type": "application/json" });
-  if (cookie) {
-    headers.set("cookie", `silpo_session=${cookie}`);
+  const pairs = Object.entries(cookies).map(([name, value]) => `${name}=${value}`);
+  if (pairs.length > 0) {
+    headers.set("cookie", pairs.join("; "));
   }
   return new NextRequest("https://app.silpo-test.ua/api/drafts", {
     method: "POST",
@@ -103,7 +114,9 @@ describe("POST /api/drafts", () => {
       openGateway,
     }));
 
-    const response = await handler(post({ mode: "demo", userId: "attacker" }, "session-handle"));
+    const response = await handler(
+      post({ mode: "demo", userId: "attacker" }, { silpo_session: "session-handle" }),
+    );
     const payload = await response.json();
 
     expect(response.status).toBe(200);
@@ -176,6 +189,61 @@ describe("POST /api/drafts", () => {
     expect(response.status).toBe(502);
     expect(payload.error.code).toBe("invalid_external_data");
     expect(JSON.stringify(payload)).not.toContain("silpo_get_my_shopping_cart");
+  });
+
+  it("issues a per-visitor demo handle as an HttpOnly cookie on first visit", async () => {
+    const handler = createDraftsPostHandler(makeDeps());
+
+    const response = await handler(post());
+    const setCookie = response.headers.get("set-cookie") ?? "";
+
+    expect(response.status).toBe(200);
+    expect(setCookie).toContain(`demo_session=${DEMO_HANDLE}`);
+    expect(setCookie).toContain("HttpOnly");
+    expect(setCookie).toContain("SameSite=lax");
+    expect(setCookie).toContain("Path=/");
+  });
+
+  it("keeps a returning visitor's handle instead of minting a new one", async () => {
+    const handler = createDraftsPostHandler(makeDeps());
+    const existing = createDemoHandle();
+
+    const response = await handler(post(undefined, { demo_session: existing }));
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("set-cookie")).toBeNull();
+  });
+
+  it("scopes a demo draft to the visitor that generated it", async () => {
+    const repository = createInMemoryDraftRepository();
+    const handler = createDraftsPostHandler(makeDeps({ repository: () => repository }));
+    const visitorA = createDemoHandle();
+    const visitorB = createDemoHandle();
+
+    const responseA = await handler(post(undefined, { demo_session: visitorA }));
+    const { draft } = await responseA.json();
+
+    // The other visitor cannot load it, because the ids differ.
+    await expect(repository.get(draft.id, demoUserIdFor(visitorA))).resolves.not.toBeNull();
+    await expect(repository.get(draft.id, demoUserIdFor(visitorB))).resolves.toBeNull();
+  });
+
+  it("still sets the demo cookie when the run itself fails", async () => {
+    const handler = createDraftsPostHandler(makeDeps({
+      openGateway: async () => ({
+        gateway: {
+          ...createDemoSilpoGateway(),
+          async listTools() { throw new McpCallError("t", 429, "3"); },
+        },
+        async close() {},
+      }),
+    }));
+
+    const response = await handler(post());
+
+    expect(response.status).toBe(429);
+    // Otherwise every retry would mint a new identity and a new user row.
+    expect(response.headers.get("set-cookie")).toContain(`demo_session=${DEMO_HANDLE}`);
   });
 
   it("returns 500 with a safe message when the environment is unusable", async () => {

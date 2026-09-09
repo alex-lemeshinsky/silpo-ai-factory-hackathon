@@ -60,7 +60,7 @@ No edit to `src/features/shared/contracts.ts`, `src/lib/env.ts`, `src/lib/result
 
 **D2 — `createSilpoGateway` returns a disposable handle, not a bare gateway.** The backlog's step 3 says the factory "returns either the demo implementation or a composition of live history, cart-context, and catalog gateways". A live composition owns MCP sessions that must be closed, and `SilpoGateway` declares no disposal method. Adding one would edit Task 2's contracts file, which this task does not own. The factory therefore returns `SilpoGatewayHandle = { gateway: SilpoGateway; close(): Promise<void> }`. The gateway inside is exactly the `SilpoGateway` the backlog describes.
 
-**D3 — demo mode persists under a synthetic user.** The backlog's step 4 requires the run to persist mode alongside `algorithmVersion` and `trainingCutoff`, and `drafts.user_id` is a foreign key to `users`. Demo mode has no OAuth session and therefore no user. A fixed synthetic user row, ensured idempotently on first demo run, keeps one persistence path for both modes and leaves Tasks 15–16 with nothing to special-case. `DATABASE_URL` is already mandatory in `getServerEnv`, so demo mode already requires a database and this adds no new operational burden.
+**D3 — demo mode persists under a synthetic user.** The backlog's step 4 requires the run to persist mode alongside `algorithmVersion` and `trainingCutoff`, and `drafts.user_id` is a foreign key to `users`. Demo mode has no OAuth session and therefore no user. A synthetic user row, ensured idempotently on each demo run, keeps one persistence path for both modes and leaves Tasks 15–16 with nothing to special-case. `DATABASE_URL` is already mandatory in `getServerEnv`, so demo mode already requires a database and this adds no new operational burden. Amended on 2026-09-09: the identity is per visitor rather than a single shared constant — see T13-03 for why.
 
 **D4 — the ordered-call assertion is stated as a prefix plus a prohibition.** The backlog's step 1 asks for ordered calls `listTools → cart context → history → normalize → infer → resolve → Gemini → save`. Agent architecture section 5 places `loadCustomerContext()` third, and `resolveProducts` issues its own `findProducts`, `getProductDetails`, `getSimilarProducts` and `getReplacements` calls that a recording gateway also observes. Asserting one exact sequence would therefore pin the resolver's internal call pattern to this task's test. The test instead asserts that the recorded sequence *begins* with `listTools, loadCartContext, loadCustomerContext, loadPurchaseHistory`, that `findProducts` follows them, and that `getPromotions`, `updateCartContext`, `setAbsoluteCartQuantities` and `readCart` never appear at all. The prohibition is the stronger half and the backlog's list does not contain it.
 
@@ -152,18 +152,26 @@ Consequences that the test pins:
 
 ### T13-03 — Demo identity
 
-`src/features/drafts/demo-user.ts` exports a fixed constant and an idempotent ensure:
+Amended on 2026-09-09 after review. The original design used one fixed `DEMO_USER_ID` shared by every demo visitor. `DraftRepository.get` scopes by `userId`, so a single shared id made that ownership check meaningless: any demo visitor would load any other's draft from Task 15 onward, and anonymous traffic accumulated rows under one identity with nothing distinguishing them. The persistence decision in D3 stands; only the identity stops being a constant.
+
+`src/features/drafts/demo-user.ts` exports:
 
 ```ts
-export const DEMO_USER_ID = "00000000-0000-4000-8000-00000000de10";
-export async function ensureDemoUser(db: DbClient): Promise<string>;
+export const DEMO_SESSION_COOKIE = "demo_session";
+export const DEMO_SESSION_MAX_AGE_SECONDS = 24 * 60 * 60;
+export function createDemoHandle(): string;
+export function isDemoHandle(value: string | null | undefined): value is string;
+export function demoUserIdFor(handle: string): string;
+export async function ensureDemoUser(db: DbClient, cookieValue: string | null): Promise<DemoIdentity>;
 ```
 
-`ensureDemoUser` inserts `users` with that id and `onConflictDoNothing()`, then returns `DEMO_USER_ID`. It is safe to call on every demo run and adds no migration: the row is data, not schema.
+A handle is 32 random bytes, base64url — the same shape as the OAuth session handle. `ensureDemoUser` accepts the incoming cookie, replaces anything that fails `isDemoHandle` with a freshly minted handle rather than trusting it, derives the user id, inserts `users` with `onConflictDoNothing()` and reports whether it issued a handle.
 
-The id is a synthetic constant, never a real Silpo identity, and it is documented as such at its declaration. Demo drafts persist through the same `createPostgresDraftRepository`, carry `mode: "demo"`, and are therefore labeled everywhere a draft's mode is read.
+`demoUserIdFor` is SHA-256 of `silpo-demo:<handle>` truncated to sixteen bytes with the RFC 4122 version and variant bits set. The database key is therefore derived from the handle rather than being the handle, so a client-chosen value never reaches `users.id` and an oversized or malformed cookie cannot shape a row.
 
-`ensureDemoUser` is only ever called from `handlers.ts` on the demo branch. The service receives a resolved `userId` and cannot tell the two modes apart by identity.
+`handlers.ts` sets the cookie — `HttpOnly`, `SameSite=Lax`, `Path=/`, `Secure` in production — on whatever the request returns, success or failure, so a visitor whose run failed is not handed a new identity, and a new `users` row, on every retry. It is only ever called on the demo branch; the service receives a resolved `userId` and cannot tell the two modes apart by identity.
+
+Demo drafts persist through the same `createPostgresDraftRepository`, carry `mode: "demo"`, and are therefore labeled everywhere a draft's mode is read. Every identity here is synthetic and never derived from a real Silpo guest.
 
 ### T13-04 — Run ordering and the read-only guarantee
 
@@ -361,7 +369,7 @@ No test calls Google, opens a network socket, or requires a database. `demo-user
 |---|---|---|
 | T13-01 | `createSilpoGateway` dispatches on mode and never crosses it | `gateway.test.ts` |
 | T13-02 | An ordinary run opens one session; a bootstrap opens two; `close()` matches | `gateway.test.ts` |
-| T13-03 | Demo persists under a synthetic user, idempotently | `demo-user.test.ts`, `draft-route.test.ts` |
+| T13-03 | Demo persists under a per-visitor synthetic user, idempotently | `demo-user.test.ts`, `draft-route.test.ts` |
 | T13-04 | Documented order holds and no cart write occurs | `service.test.ts` |
 | T13-05 | Active city resolves through three deterministic branches | `service.test.ts` |
 | T13-06 | Assembly produces a `DraftSchema`-valid draft, including the empty one | `assemble.test.ts` |

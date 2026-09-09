@@ -919,7 +919,7 @@ git add src/features/silpo/gateway.ts src/features/drafts/service.ts src/app/api
 git commit -m "feat: orchestrate personal drafts"
 ```
 
-Виконано 2026-09-08. Специфікація: [design](./superpowers/specs/2026-09-08-draft-orchestration-design.md), план: [plan](./superpowers/plans/2026-09-08-draft-orchestration.md). Живий MCP-прогін не виконано — немає авторизованої сесії «Сільпо».
+Виконано 2026-09-09. Специфікація: [design](./superpowers/specs/2026-09-08-draft-orchestration-design.md), план: [plan](./superpowers/plans/2026-09-08-draft-orchestration.md). Живий MCP-прогін не виконано — немає авторизованої сесії «Сільпо».
 
 ---
 

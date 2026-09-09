@@ -182,7 +182,7 @@ export interface SilpoGateway {
 
 `createSilpoGateway({ mode, userId, publicBaseUrl })` повертає `SilpoGatewayHandle` — `{ gateway, close() }`. Live-композиція відкриває один read session і lazy write session, який створюється лише за потреби bootstrap кошика. Mode фіксується під час створення; live ніколи не повертає demo gateway.
 
-Demo mode персистує чернетки під синтетичним користувачем `DEMO_USER_ID`, який ідемпотентно створюється перед першим запуском. Це зберігає єдиний шлях персистенції для live і demo.
+Demo mode персистує чернетки під синтетичним користувачем, окремим для кожного відвідувача. Сервер видає непрозорий handle (32 байти base64url) у cookie `demo_session` (`HttpOnly`, `SameSite=Lax`, `Path=/`, `Secure` у production, 24 години) і виводить `users.id` детерміновано з SHA-256 цього handle, тому клієнтське значення ніколи не потрапляє в ключ бази напряму. Малформований cookie замінюється новим, а не приймається. Це зберігає єдиний шлях персистенції для live і demo й водночас лишає перевірці власника в `DraftRepository.get` реальний сенс: один спільний ідентифікатор зробив би demo-чернетки взаємно видимими.
 
 Деталі — у [специфікації Task 13](./superpowers/specs/2026-09-08-draft-orchestration-design.md).
 

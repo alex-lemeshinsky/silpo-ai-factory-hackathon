@@ -101,6 +101,29 @@ describe("assembleDraft", () => {
     expect(DraftSchema.parse(draft)).toEqual(draft);
   });
 
+  it("takes externalProductId from the resolved product, not from the proposal", () => {
+    const proposal: DraftProposal = {
+      summary: "Ваш звичний набір",
+      items: [{
+        productId: "p-1",
+        // A value the model must never be the source of. `validateProposal`
+        // rejects a mismatch upstream, so assembly must not depend on it.
+        externalProductId: 999,
+        quantity: 1,
+        reason: "Купуєте приблизно щотижня",
+        alternativeIds: [],
+      }],
+    };
+
+    const draft = assembleDraft({
+      ...BASE,
+      proposal,
+      resolvedNeeds: [resolved(product({ externalProductId: 101 }))],
+    });
+
+    expect(draft.items[0].externalProductId).toBe(101);
+  });
+
   it("orders alternatives by the proposal's ranking and appends any it omitted", () => {
     const alternatives = [
       product({ productId: "alt-a", externalProductId: 201, slug: "a" }),

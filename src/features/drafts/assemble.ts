@@ -73,7 +73,11 @@ export function assembleDraft(input: AssembleDraftInput): Draft {
     const product = resolved.selected;
     return {
       productId: item.productId,
-      externalProductId: item.externalProductId,
+      // From the resolved product, not from `item`. `validateProposal`
+      // proves the two are equal, but an identity fact the guardrails say
+      // the model never supplies should not be read out of model output —
+      // and this way it holds without depending on a distant validator.
+      externalProductId: product.externalProductId,
       name: product.name,
       imageUrl: product.imageUrl,
       displayRatio: product.displayRatio,
