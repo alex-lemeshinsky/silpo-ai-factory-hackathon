@@ -20,6 +20,7 @@
 *.tsbuildinfo
 next-env.d.ts
 pnpm-debug.log*
+.pnpm-store/
 
 # OS/editor noise
 .DS_Store
