@@ -939,76 +939,113 @@ git commit -m "feat: orchestrate personal drafts"
 - Consumes: serialized `Draft`.
 - Produces: responsive action-first dashboard.
 
-- [ ] **Step 1: Write failing component tests**
+- [x] **Step 1: Write failing component tests**
 
 Verify the hero summary, confidence label, price, stock, explanation, available loyalty bonus, demo banner, insufficient-nutrition copy, and absence of checkout while draft status is not `verified`. The bonus is informational only in this task: it must never be applied automatically or presented as already deducted from the total.
 
-- [ ] **Step 2: Confirm failure**
+- [x] **Step 2: Confirm failure**
 
 Run: `pnpm vitest run src/components/autopilot/draft-dashboard.test.tsx`
 Expected: FAIL.
 
-- [ ] **Step 3: Implement design tokens**
+- [x] **Step 3: Implement design tokens**
 
 Define CSS variables `--autopilot-orange:#FE8522`, `--autopilot-blue:#2358D1`, `--autopilot-ink:#202124`, `--autopilot-bg:#F5F5FB`, `--autopilot-lilac:#EEEAFB`, and `--autopilot-green:#C7DF9C`. Use pill controls, white rounded sections, playful shapes, and a distinct “Автопілот” wordmark without copying the Silpo logo.
 
-- [ ] **Step 4: Implement the dashboard**
+- [x] **Step 4: Implement the dashboard**
 
 Order: header → hero → forecast/value cards → “Ймовірно закінчується” product grid → sticky summary. Support loading, generating, ready, partial, blocked, verified, and demo states.
 
-- [ ] **Step 5: Verify responsive behavior**
+- [x] **Step 5: Verify responsive behavior**
 
 Run: `pnpm vitest run src/components/autopilot/draft-dashboard.test.tsx && pnpm build`
 Expected: PASS; no horizontal overflow at 390px and 1440px.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/app/dashboard src/app/globals.css src/components/autopilot
 git commit -m "feat: add action-first draft dashboard"
 ```
 
+Виконано 2026-09-09. Специфікація: [design](./superpowers/specs/2026-09-04-dashboard-shell-design.md), план: [plan](./superpowers/plans/2026-09-04-dashboard-shell.md). Реалізовано Silpo-inspired dashboard shell, hero summary, forecast/value cards, sticky summary, responsive layout. Перевірено dashboard component suite (40 tests) та build.
+
 ---
 
 ### Task 15: Draft editing and persisted approval
 
 **Files:**
-- Create: `src/components/autopilot/draft-editor.tsx`
+- Modify: `src/features/drafts/repository.ts`
+- Create: `src/features/drafts/approval-service.ts`
 - Create: `src/app/api/drafts/[draftId]/approve/route.ts`
+- Create: `src/components/autopilot/draft-editor.tsx`
 - Modify: `src/components/autopilot/draft-dashboard.tsx`
+- Modify: `src/components/autopilot/draft-product-card.tsx`
+- Modify: `src/components/autopilot/draft-summary.tsx`
+- Modify: `src/app/globals.css`
+- Modify: `docs/project-architecture.md`
+- Modify: `docs/tasks.md`
+- Test: `src/features/drafts/repository.test.ts`
+- Test: `src/features/drafts/approval-service.test.ts`
 - Test: `src/components/autopilot/draft-editor.test.tsx`
+- Test: `src/components/autopilot/draft-dashboard.test.tsx`
 - Test: `tests/integration/draft-approval.test.ts`
 
 **Interfaces:**
 - Consumes: `DraftRepository`.
 - Produces: quantity/remove/replace interactions and `POST /api/drafts/:draftId/approve` returning `{ idempotencyKey }`.
 
-- [ ] **Step 1: Write failing interaction tests**
+- [x] **Step 1: Write failing interaction tests**
 
 Test quantity step, stock cap, removal, alternative selection, changed total, double-submit prevention, and approval ownership.
 
-- [ ] **Step 2: Confirm failure**
+- [x] **Step 2: Confirm failure**
 
 Run: `pnpm vitest run src/components/autopilot/draft-editor.test.tsx tests/integration/draft-approval.test.ts`
 Expected: FAIL.
 
-- [ ] **Step 3: Implement editing**
+- [x] **Step 3: Implement editing**
 
 All totals are computed from server-provided price snapshots. Disable confirm while a replacement is unresolved or quantity violates step/stock. Never display a nutrition comparison when either side is `insufficient`.
 
-- [ ] **Step 4: Implement approval route**
+- [x] **Step 4: Implement approval route**
 
 Validate session ownership, current draft version, and selected item version. Persist one approval and generate one UUID idempotency key. Repeated requests return the same key.
 
-- [ ] **Step 5: Verify and commit**
+- [x] **Step 5: Verify and commit**
 
-Run: `pnpm vitest run src/components/autopilot/draft-editor.test.tsx tests/integration/draft-approval.test.ts && pnpm typecheck`
+Run:
+```bash
+pnpm vitest run \
+  src/features/drafts/approval-service.test.ts \
+  src/features/drafts/repository.test.ts \
+  src/components/autopilot/draft-editor.test.tsx \
+  src/components/autopilot/draft-dashboard.test.tsx \
+  tests/integration/draft-approval.test.ts
+```
 Expected: PASS.
 
 ```bash
-git add src/components/autopilot/draft-editor.tsx src/components/autopilot/draft-dashboard.tsx src/app/api/drafts tests/integration/draft-approval.test.ts
+git add \
+  src/features/drafts/repository.ts \
+  src/features/drafts/repository.test.ts \
+  src/features/drafts/approval-service.ts \
+  src/features/drafts/approval-service.test.ts \
+  src/app/api/drafts/'[draftId]'/approve/route.ts \
+  tests/integration/draft-approval.test.ts \
+  src/components/autopilot/draft-editor.tsx \
+  src/components/autopilot/draft-editor.test.tsx \
+  src/components/autopilot/draft-dashboard.tsx \
+  src/components/autopilot/draft-dashboard.test.tsx \
+  src/components/autopilot/draft-product-card.tsx \
+  src/components/autopilot/draft-summary.tsx \
+  src/app/globals.css \
+  docs/project-architecture.md \
+  docs/tasks.md
 git commit -m "feat: edit and approve draft baskets"
 ```
+
+Виконано 2026-09-09. Специфікація: [design](./superpowers/specs/2026-09-09-draft-editing-approval-design.md), план: [plan](./superpowers/plans/2026-09-09-draft-editing-approval.md). Approval route не викликає MCP або cart write; live write smoke належить Task 16. Перевірено component/service/repository/integration suites, lint, typecheck, build і responsive layout на 390 px та 1440 px.
 
 ---
 

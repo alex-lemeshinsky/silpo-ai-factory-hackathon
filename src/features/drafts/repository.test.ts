@@ -1,12 +1,38 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi, type Mock } from "vitest";
 import type { DbClient } from "@/db/client";
-import { type Draft, DraftSchema } from "@/features/shared/contracts";
+import { drafts } from "@/db/schema";
+import {
+  DraftItemSchema,
+  DraftSchema,
+  ProductCandidateSchema,
+  type Draft,
+  type DraftItem,
+  type ProductCandidate,
+} from "@/features/shared/contracts";
 import {
   createInMemoryDraftRepository,
   createPostgresDraftRepository,
+  type PersistDraftApprovalInput,
 } from "./repository";
 
-const draftFixture: Draft = {
+const replacement: ProductCandidate = ProductCandidateSchema.parse({
+  productId: "product-2-alt",
+  externalProductId: 202,
+  slug: "product-2-alt",
+  name: "Кефір",
+  imageUrl: null,
+  price: 60,
+  specialPrice: 50,
+  available: true,
+  stock: 8,
+  step: 1,
+  displayRatio: 0.9,
+  nutritionStatus: "insufficient",
+  nutrition: null,
+  promotions: [{ id: "promo-kefir", label: "Акція", price: 50 }],
+});
+
+const editableDraftFixture: Draft = DraftSchema.parse({
   id: "00000000-0000-4000-8000-000000000001",
   mode: "demo",
   status: "ready",
@@ -33,10 +59,93 @@ const draftFixture: Draft = {
       promotions: [],
       alternatives: [],
     },
+    {
+      productId: "product-2",
+      externalProductId: 102,
+      name: "Сметана",
+      imageUrl: null,
+      displayRatio: 1,
+      quantity: 1,
+      price: 65,
+      specialPrice: null,
+      stock: 10,
+      step: 1,
+      confidence: 0.8,
+      confidenceBand: "high",
+      reasonCodes: ["weekly_cycle"],
+      reason: "Купуєте приблизно щотижня",
+      nutritionStatus: "insufficient",
+      promotions: [],
+      alternatives: [replacement],
+    },
+    {
+      productId: "product-3",
+      externalProductId: 103,
+      name: "Хліб",
+      imageUrl: null,
+      displayRatio: 1,
+      quantity: 1,
+      price: 30,
+      specialPrice: null,
+      stock: 5,
+      step: 1,
+      confidence: 0.8,
+      confidenceBand: "high",
+      reasonCodes: ["weekly_cycle"],
+      reason: "Купуєте приблизно щотижня",
+      nutritionStatus: "insufficient",
+      promotions: [],
+      alternatives: [],
+    },
   ],
-  total: 110,
+  total: 2 * 55 + 65 + 30,
   version: 1,
-};
+});
+
+const draftFixture = editableDraftFixture;
+
+function approvalMutation(overrides: Partial<PersistDraftApprovalInput> = {}): PersistDraftApprovalInput {
+  const approvedDraft = DraftSchema.parse({
+    ...editableDraftFixture,
+    status: "confirming",
+    version: 2,
+    items: [
+      { ...editableDraftFixture.items[0], quantity: 3 },
+      {
+        ...editableDraftFixture.items[1],
+        productId: replacement.productId,
+        externalProductId: replacement.externalProductId,
+        name: replacement.name,
+        imageUrl: replacement.imageUrl,
+        displayRatio: replacement.displayRatio,
+        quantity: 1,
+        price: replacement.price,
+        specialPrice: replacement.specialPrice,
+        stock: replacement.stock,
+        step: replacement.step,
+        nutritionStatus: replacement.nutritionStatus,
+        promotions: replacement.promotions,
+        alternatives: [],
+      },
+    ],
+    total: 3 * 55 + 50,
+  }) as Draft & { status: "confirming" };
+
+  return {
+    draftId: editableDraftFixture.id,
+    userId: "user-1",
+    expectedDraftVersion: 1,
+    approvedDraft,
+    decisions: [
+      { sourceProductId: "product-1", expectedVersion: 1, decision: "kept", item: approvedDraft.items[0] },
+      { sourceProductId: "product-2", expectedVersion: 1, decision: "replaced", item: approvedDraft.items[1] },
+      { sourceProductId: "product-3", expectedVersion: 1, decision: "removed", item: null },
+    ],
+    idempotencyKey: "00000000-0000-4000-8000-000000000015",
+    approvedAt: new Date("2026-09-09T10:00:00.000Z"),
+    ...overrides,
+  };
+}
 
 describe("DraftRepository (in-memory)", () => {
   it("saves, loads, and updates an owned draft", async () => {
@@ -65,58 +174,174 @@ describe("DraftRepository (in-memory)", () => {
     ).rejects.toThrow();
   });
 
-  it("persists explicit draft approval once", async () => {
+  it("T15-12 atomically stores kept, replaced, and removed decisions", async () => {
     const repo = createInMemoryDraftRepository();
-    const result = await repo.approve("draft-1", "user-1", "key-1");
-    expect(result).toEqual({ idempotencyKey: "key-1" });
+    await repo.save("user-1", editableDraftFixture);
 
-    await expect(repo.approve("draft-1", "user-1", "key-2")).rejects.toThrow("already approved");
+    const firstItem: DraftItem = editableDraftFixture.items[0];
+    expect(DraftItemSchema.safeParse(firstItem).success).toBe(true);
+
+    await expect(repo.approveSelection(approvalMutation())).resolves.toEqual({
+      status: "approved",
+      idempotencyKey: "00000000-0000-4000-8000-000000000015",
+    });
+    await expect(repo.get(editableDraftFixture.id, "user-1"))
+      .resolves.toEqual(approvalMutation().approvedDraft);
+    await expect(repo.getApproval(editableDraftFixture.id, "user-1"))
+      .resolves.toMatchObject({
+        draftId: editableDraftFixture.id,
+        userId: "user-1",
+        idempotencyKey: "00000000-0000-4000-8000-000000000015",
+      });
+    await expect(repo.getApproval(editableDraftFixture.id, "user-2")).resolves.toBeNull();
   });
 
-  it("is idempotent when re-approving with identical parameters", async () => {
+  it("T15-13 leaves the ready draft untouched after a stale item version", async () => {
     const repo = createInMemoryDraftRepository();
-    const first = await repo.approve("draft-1", "user-1", "key-1");
-    const second = await repo.approve("draft-1", "user-1", "key-1");
+    await repo.save("user-1", editableDraftFixture);
+    const input = approvalMutation({
+      decisions: approvalMutation().decisions.map((decision, index) =>
+        index === 1 ? { ...decision, expectedVersion: 9 } : decision),
+    });
 
-    expect(first).toEqual({ idempotencyKey: "key-1" });
-    expect(second).toEqual({ idempotencyKey: "key-1" });
+    await expect(repo.approveSelection(input)).resolves.toEqual({ status: "conflict" });
+    await expect(repo.get(editableDraftFixture.id, "user-1")).resolves.toEqual(editableDraftFixture);
+    await expect(repo.getApproval(editableDraftFixture.id, "user-1")).resolves.toBeNull();
   });
 
-  it("rejects approval for already approved draft from another user", async () => {
+  it("T15-13 returns the first key for a repeated approval", async () => {
     const repo = createInMemoryDraftRepository();
-    await repo.approve("draft-1", "user-1", "key-1");
+    await repo.save("user-1", editableDraftFixture);
+    await repo.approveSelection(approvalMutation());
 
-    await expect(repo.approve("draft-1", "user-2", "key-1")).rejects.toThrow("already approved");
+    await expect(repo.approveSelection(approvalMutation({
+      idempotencyKey: "00000000-0000-4000-8000-000000000099",
+    }))).resolves.toEqual({
+      status: "already_approved",
+      idempotencyKey: "00000000-0000-4000-8000-000000000015",
+    });
+  });
+
+  it("returns not_found when approving a missing draft or from a different owner", async () => {
+    const repo = createInMemoryDraftRepository();
+    await repo.save("user-1", editableDraftFixture);
+
+    // Missing draft
+    const missing = approvalMutation({
+      draftId: "00000000-0000-4000-8000-000000000099",
+      approvedDraft: { ...approvalMutation().approvedDraft, id: "00000000-0000-4000-8000-000000000099" },
+    });
+    await expect(repo.approveSelection(missing)).resolves.toEqual({ status: "not_found" });
+
+    // Different owner
+    const wrongOwner = approvalMutation({ userId: "user-2" });
+    await expect(repo.approveSelection(wrongOwner)).resolves.toEqual({ status: "not_found" });
+    await expect(repo.get(editableDraftFixture.id, "user-1")).resolves.toEqual(editableDraftFixture);
+    await expect(repo.getApproval(editableDraftFixture.id, "user-1")).resolves.toBeNull();
+  });
+
+  it("returns conflict on stale draft version, incomplete decisions, or duplicate decisions", async () => {
+    const repo = createInMemoryDraftRepository();
+    await repo.save("user-1", editableDraftFixture);
+
+    // Stale draft version
+    await expect(
+      repo.approveSelection(approvalMutation({ expectedDraftVersion: 9 })),
+    ).resolves.toEqual({ status: "conflict" });
+
+    // Incomplete decisions (2 instead of 3)
+    await expect(
+      repo.approveSelection(approvalMutation({ decisions: approvalMutation().decisions.slice(0, 2) })),
+    ).resolves.toEqual({ status: "conflict" });
+
+    // Duplicate decisions (same sourceProductId twice)
+    await expect(
+      repo.approveSelection(approvalMutation({
+        decisions: [
+          approvalMutation().decisions[0],
+          approvalMutation().decisions[0],
+          approvalMutation().decisions[2],
+        ],
+      })),
+    ).resolves.toEqual({ status: "conflict" });
+
+    await expect(repo.get(editableDraftFixture.id, "user-1")).resolves.toEqual(editableDraftFixture);
+    await expect(repo.getApproval(editableDraftFixture.id, "user-1")).resolves.toBeNull();
+  });
+
+  it("returns conflict when approvedDraft has wrong id, version, or status", async () => {
+    const repo = createInMemoryDraftRepository();
+    await repo.save("user-1", editableDraftFixture);
+
+    // Wrong ID
+    await expect(
+      repo.approveSelection(approvalMutation({
+        approvedDraft: { ...approvalMutation().approvedDraft, id: "00000000-0000-4000-8000-000000000099" },
+      })),
+    ).resolves.toEqual({ status: "conflict" });
+
+    // Wrong version (not expectedDraftVersion + 1)
+    await expect(
+      repo.approveSelection(approvalMutation({
+        approvedDraft: { ...approvalMutation().approvedDraft, version: 5 },
+      })),
+    ).resolves.toEqual({ status: "conflict" });
+
+    // Wrong status
+    await expect(
+      repo.approveSelection(approvalMutation({
+        approvedDraft: { ...approvalMutation().approvedDraft, status: "ready" as unknown as "confirming" },
+      })),
+    ).resolves.toEqual({ status: "conflict" });
+
+    await expect(repo.get(editableDraftFixture.id, "user-1")).resolves.toEqual(editableDraftFixture);
+    await expect(repo.getApproval(editableDraftFixture.id, "user-1")).resolves.toBeNull();
+  });
+
+  it("rejects when idempotency key was already used for another draft", async () => {
+    const repo = createInMemoryDraftRepository();
+    await repo.save("user-1", editableDraftFixture);
+
+    const secondDraft: Draft = {
+      ...editableDraftFixture,
+      id: "00000000-0000-4000-8000-000000000002",
+    };
+    await repo.save("user-1", secondDraft);
+
+    // Approve first draft
+    await repo.approveSelection(approvalMutation());
+
+    // Attempt to approve second draft with same idempotency key
+    const secondMutation: PersistDraftApprovalInput = {
+      ...approvalMutation(),
+      draftId: secondDraft.id,
+      approvedDraft: {
+        ...approvalMutation().approvedDraft,
+        id: secondDraft.id,
+      },
+    };
+    await expect(repo.approveSelection(secondMutation)).rejects.toThrow();
+
+    // Second draft remains ready and unapproved
+    await expect(repo.get(secondDraft.id, "user-1")).resolves.toEqual(secondDraft);
+    await expect(repo.getApproval(secondDraft.id, "user-1")).resolves.toBeNull();
   });
 
   it("retrieves persisted approval or returns null", async () => {
     const repo = createInMemoryDraftRepository();
-    expect(await repo.getApproval("draft-1")).toBeNull();
+    expect(await repo.getApproval(editableDraftFixture.id, "user-1")).toBeNull();
 
-    await repo.approve("draft-1", "user-1", "key-1");
-    const record = await repo.getApproval("draft-1");
+    await repo.save("user-1", editableDraftFixture);
+    await repo.approveSelection(approvalMutation());
+    const record = await repo.getApproval(editableDraftFixture.id, "user-1");
 
     expect(record).not.toBeNull();
     expect(record?.id).toBeDefined();
     expect(typeof record?.id).toBe("string");
-    expect(record?.draftId).toBe("draft-1");
+    expect(record?.draftId).toBe(editableDraftFixture.id);
     expect(record?.userId).toBe("user-1");
-    expect(record?.idempotencyKey).toBe("key-1");
-  });
-
-  it("tracks approvals across multiple drafts independently", async () => {
-    const repo = createInMemoryDraftRepository();
-    await repo.approve("draft-1", "user-1", "key-1");
-    await repo.approve("draft-2", "user-2", "key-2");
-
-    expect((await repo.getApproval("draft-1"))?.idempotencyKey).toBe("key-1");
-    expect((await repo.getApproval("draft-2"))?.idempotencyKey).toBe("key-2");
-  });
-
-  it("rejects using the same idempotency key across different drafts", async () => {
-    const repo = createInMemoryDraftRepository();
-    await repo.approve("draft-1", "user-1", "shared-key");
-    await expect(repo.approve("draft-2", "user-1", "shared-key")).rejects.toThrow("already approved");
+    expect(record?.idempotencyKey).toBe("00000000-0000-4000-8000-000000000015");
+    expect(await repo.getApproval(editableDraftFixture.id, "user-2")).toBeNull();
   });
 
   it("A7-02 round-trips presentation fields through the in-memory repository", async () => {
@@ -146,6 +371,156 @@ describe("DraftRepository (in-memory)", () => {
 });
 
 describe("DraftRepository (postgres)", () => {
+  let mockDb: DbClient;
+  let lockForUpdate: Mock;
+  let itemUpdates: Array<Record<string, unknown>>;
+  let approvalInsert: Mock;
+  let draftUpdate: Mock<() => unknown>;
+
+  function mockDbForSuccessfulApproval() {
+    lockForUpdate = vi.fn().mockReturnThis();
+    itemUpdates = [];
+    draftUpdate = vi.fn(() => ({
+      set: vi.fn(() => ({
+        where: vi.fn(() => ({
+          returning: vi.fn(async () => [{ id: editableDraftFixture.id }]),
+        })),
+      })),
+    }));
+    const updateItem = vi.fn(() => ({
+      set: vi.fn((val: Record<string, unknown>) => {
+        itemUpdates.push(val);
+        return {
+          where: vi.fn(async () => []),
+        };
+      }),
+    }));
+    approvalInsert = vi.fn(async () => []);
+
+    const lockedDraftRow = {
+      id: editableDraftFixture.id,
+      userId: "user-1",
+      sourceRunId: "run-1",
+      mode: "demo",
+      status: "ready",
+      total: editableDraftFixture.total,
+      version: 1,
+      summary: editableDraftFixture.summary,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+
+    const itemRows = [
+      { id: "item-row-1", draftId: editableDraftFixture.id, productId: "product-1", version: 1, position: 0 },
+      { id: "item-row-2", draftId: editableDraftFixture.id, productId: "product-2", version: 1, position: 1 },
+      { id: "item-row-3", draftId: editableDraftFixture.id, productId: "product-3", version: 1, position: 2 },
+    ];
+
+    let selectCallCount = 0;
+    const tx = {
+      select: vi.fn(() => ({
+        from: vi.fn(() => {
+          selectCallCount++;
+          if (selectCallCount === 1) {
+            return {
+              where: vi.fn(() => ({
+                for: lockForUpdate.mockReturnValue({
+                  limit: vi.fn(async () => [lockedDraftRow]),
+                }),
+              })),
+            };
+          } else if (selectCallCount === 2) {
+            return {
+              where: vi.fn(() => ({
+                limit: vi.fn(async () => []),
+              })),
+            };
+          } else {
+            return {
+              where: vi.fn(() => ({
+                orderBy: vi.fn(() => ({
+                  for: lockForUpdate.mockReturnValue(Promise.resolve(itemRows)),
+                })),
+              })),
+            };
+          }
+        }),
+      })),
+      update: vi.fn((table) => {
+        if (table === drafts) {
+          return draftUpdate();
+        }
+        return updateItem();
+      }),
+      insert: vi.fn(() => ({
+        values: approvalInsert,
+      })),
+    };
+
+    mockDb = {
+      transaction: vi.fn(async <T>(callback: (txArg: typeof tx) => Promise<T>) => callback(tx)),
+    } as unknown as DbClient;
+
+    return mockDb;
+  }
+
+  function mockDbWithExistingApproval() {
+    draftUpdate = vi.fn();
+    itemUpdates = [];
+    approvalInsert = vi.fn();
+
+    const lockedDraftRow = {
+      id: editableDraftFixture.id,
+      userId: "user-1",
+      sourceRunId: "run-1",
+      mode: "demo",
+      status: "ready",
+      total: editableDraftFixture.total,
+      version: 1,
+      summary: editableDraftFixture.summary,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+
+    const existingApprovalRow = {
+      id: "app-row-1",
+      draftId: editableDraftFixture.id,
+      userId: "user-1",
+      idempotencyKey: "00000000-0000-4000-8000-000000000015",
+      createdAt: new Date(),
+    };
+
+    let selectCallCount = 0;
+    const tx = {
+      select: vi.fn(() => ({
+        from: vi.fn(() => {
+          selectCallCount++;
+          if (selectCallCount === 1) {
+            return {
+              where: vi.fn(() => ({
+                for: vi.fn().mockReturnValue({
+                  limit: vi.fn(async () => [lockedDraftRow]),
+                }),
+              })),
+            };
+          } else {
+            return {
+              where: vi.fn(() => ({
+                limit: vi.fn(async () => [existingApprovalRow]),
+              })),
+            };
+          }
+        }),
+      })),
+      update: draftUpdate,
+      insert: approvalInsert,
+    };
+
+    return {
+      transaction: vi.fn(async <T>(callback: (txArg: typeof tx) => Promise<T>) => callback(tx)),
+    } as unknown as DbClient;
+  }
+
   it("persists a draft, prediction metadata, and item snapshots atomically", async () => {
     const tx = {
       select: vi.fn(() => ({
@@ -163,14 +538,14 @@ describe("DraftRepository (postgres)", () => {
         .mockImplementationOnce(() => ({ values: vi.fn(async () => []) }))
         .mockImplementationOnce(() => ({ values: vi.fn(async () => []) })),
     };
-    const mockDb = {
+    const db = {
       transaction: vi.fn(async (callback: (transaction: typeof tx) => Promise<Draft>) =>
         callback(tx)),
     } as unknown as DbClient;
 
-    const repo = createPostgresDraftRepository(mockDb);
+    const repo = createPostgresDraftRepository(db);
     await expect(repo.save("user-1", draftFixture)).resolves.toEqual(draftFixture);
-    expect(mockDb.transaction).toHaveBeenCalledOnce();
+    expect(db.transaction).toHaveBeenCalledOnce();
     expect(tx.insert).toHaveBeenCalledTimes(3);
   });
 
@@ -203,11 +578,11 @@ describe("DraftRepository (postgres)", () => {
       delete: vi.fn(() => ({ where: vi.fn(async () => []) })),
       insert: vi.fn(() => ({ values: vi.fn(async () => []) })),
     };
-    const mockDb = {
+    const db = {
       transaction: vi.fn(async (callback: (transaction: typeof tx) => Promise<Draft>) =>
         callback(tx)),
     } as unknown as DbClient;
-    const repo = createPostgresDraftRepository(mockDb);
+    const repo = createPostgresDraftRepository(db);
 
     await expect(
       repo.save("user-1", updatedDraft, { expectedVersion: 1 }),
@@ -216,7 +591,7 @@ describe("DraftRepository (postgres)", () => {
     expect(tx.delete).toHaveBeenCalledOnce();
   });
 
-  it("loads and validates an owned draft from postgres", async () => {
+  it("loads and validates an owned draft from postgres excluding removed tombstones", async () => {
     const createdAt = new Date("2026-09-01T10:00:00.000Z");
     const storedDraft = {
       id: draftFixture.id,
@@ -247,6 +622,7 @@ describe("DraftRepository (postgres)", () => {
       version: draftFixture.version,
       position: 0,
     };
+    let capturedWhere: unknown;
     const select = vi
       .fn()
       .mockImplementationOnce(() => ({
@@ -260,96 +636,222 @@ describe("DraftRepository (postgres)", () => {
       }))
       .mockImplementationOnce(() => ({
         from: vi.fn(() => ({
-          where: vi.fn(() => ({ orderBy: vi.fn(async () => [storedItem]) })),
+          where: vi.fn((clause) => {
+            capturedWhere = clause;
+            return {
+              orderBy: vi.fn(async () => [
+                storedItem,
+                { ...storedItem, id: "item-2", ...draftFixture.items[1], position: 1 },
+                { ...storedItem, id: "item-3", ...draftFixture.items[2], position: 2 },
+              ]),
+            };
+          }),
         })),
       }));
     const repo = createPostgresDraftRepository({ select } as unknown as DbClient);
 
     await expect(repo.get(draftFixture.id, "user-1")).resolves.toEqual(draftFixture);
+    expect(capturedWhere).toBeDefined();
   });
 
-  it("inserts new approval when not exists", async () => {
-    const rows: Array<{
-      id: string;
-      draftId: string;
-      userId: string;
-      idempotencyKey: string;
-      createdAt: Date;
-    }> = [];
-    const mockDb = {
+  it("T15-12 locks the owned draft and persists decisions plus approval in one transaction", async () => {
+    const repo = createPostgresDraftRepository(mockDbForSuccessfulApproval());
+
+    await expect(repo.approveSelection(approvalMutation())).resolves.toEqual({
+      status: "approved",
+      idempotencyKey: approvalMutation().idempotencyKey,
+    });
+    expect(mockDb.transaction).toHaveBeenCalledOnce();
+    expect(lockForUpdate).toHaveBeenCalledWith("update");
+    expect(itemUpdates).toHaveLength(3);
+    expect(itemUpdates[2]).toEqual(expect.objectContaining({ userDecision: "removed", version: 2 }));
+    expect(approvalInsert).toHaveBeenCalledWith(expect.objectContaining({
+      draftId: editableDraftFixture.id,
+      userId: "user-1",
+      idempotencyKey: approvalMutation().idempotencyKey,
+      createdAt: approvalMutation().approvedAt,
+    }));
+  });
+
+  it("T15-13 returns the locked row's existing approval without updates", async () => {
+    const repo = createPostgresDraftRepository(mockDbWithExistingApproval());
+    await expect(repo.approveSelection(approvalMutation())).resolves.toEqual({
+      status: "already_approved",
+      idempotencyKey: "00000000-0000-4000-8000-000000000015",
+    });
+    expect(draftUpdate).not.toHaveBeenCalled();
+    expect(itemUpdates).toHaveLength(0);
+    expect(approvalInsert).not.toHaveBeenCalled();
+  });
+
+  it("rolls back draft and item changes when approval insert throws in postgres", async () => {
+    let fakeDraft = {
+      id: editableDraftFixture.id,
+      userId: "user-1",
+      status: "ready",
+      version: 1,
+      total: editableDraftFixture.total,
+    };
+    const fakeItems = [
+      { id: "item-row-1", draftId: editableDraftFixture.id, productId: "product-1", version: 1, userDecision: null, position: 0 },
+      { id: "item-row-2", draftId: editableDraftFixture.id, productId: "product-2", version: 1, userDecision: null, position: 1 },
+      { id: "item-row-3", draftId: editableDraftFixture.id, productId: "product-3", version: 1, userDecision: null, position: 2 },
+    ];
+    const fakeApprovals: Array<Record<string, unknown>> = [];
+
+    let selectCallCount = 0;
+    const tx = {
       select: vi.fn(() => ({
-        from: vi.fn(() => ({
-          where: vi.fn(() => ({
-            limit: vi.fn(async () => rows),
-          })),
-        })),
-      })),
-      insert: vi.fn(() => ({
-        values: vi.fn(async (val: { draftId: string; userId: string; idempotencyKey: string }) => {
-          rows.push({ id: "uuid-1", ...val, createdAt: new Date() });
-          return [];
+        from: vi.fn(() => {
+          selectCallCount++;
+          if (selectCallCount === 1) {
+            return {
+              where: vi.fn(() => ({
+                for: vi.fn().mockReturnValue({
+                  limit: vi.fn(async () => [fakeDraft]),
+                }),
+              })),
+            };
+          } else if (selectCallCount === 2) {
+            return {
+              where: vi.fn(() => ({
+                limit: vi.fn(async () => fakeApprovals),
+              })),
+            };
+          } else {
+            return {
+              where: vi.fn(() => ({
+                orderBy: vi.fn(() => ({
+                  for: vi.fn().mockReturnValue(Promise.resolve(fakeItems)),
+                })),
+              })),
+            };
+          }
         }),
       })),
+      update: vi.fn((table) => {
+        if (table === drafts) {
+          return {
+            set: vi.fn((val) => {
+              Object.assign(fakeDraft, val);
+              return {
+                where: vi.fn(() => ({
+                  returning: vi.fn(async () => [{ id: fakeDraft.id }]),
+                })),
+              };
+            }),
+          };
+        }
+        return {
+          set: vi.fn((val) => {
+            return {
+              where: vi.fn(async () => {
+                const target = fakeItems.find((i) => i.productId === val.productId || (val.userDecision === "removed" && i.productId === "product-3"));
+                if (target) Object.assign(target, val);
+              }),
+            };
+          }),
+        };
+      }),
+      insert: vi.fn(() => ({
+        values: vi.fn(async () => {
+          throw new Error("unique constraint violation: draft_approvals.idempotency_key");
+        }),
+      })),
+    };
+
+    const rollbackDb = {
+      transaction: vi.fn(async <T>(cb: (txArg: typeof tx) => Promise<T>) => {
+        const draftSnapshot = { ...fakeDraft };
+        const itemsSnapshot = fakeItems.map((item) => ({ ...item }));
+        const approvalsSnapshot = [...fakeApprovals];
+        try {
+          return await cb(tx);
+        } catch (error) {
+          fakeDraft = draftSnapshot;
+          for (let i = 0; i < fakeItems.length; i++) {
+            Object.assign(fakeItems[i], itemsSnapshot[i]);
+          }
+          fakeApprovals.length = 0;
+          fakeApprovals.push(...approvalsSnapshot);
+          throw error;
+        }
+      }),
     } as unknown as DbClient;
 
-    const repo = createPostgresDraftRepository(mockDb);
-    const result = await repo.approve("draft-1", "user-1", "key-1");
-    expect(result).toEqual({ idempotencyKey: "key-1" });
-    expect(mockDb.insert).toHaveBeenCalled();
+    const repo = createPostgresDraftRepository(rollbackDb);
+    await expect(repo.approveSelection(approvalMutation())).rejects.toThrow("unique constraint violation");
+
+    expect(fakeDraft.status).toBe("ready");
+    expect(fakeDraft.version).toBe(1);
+    expect(fakeItems[0].version).toBe(1);
+    expect(fakeItems[0].userDecision).toBeNull();
+    expect(fakeApprovals).toHaveLength(0);
   });
 
-  it("returns key when re-approving identical draft in postgres", async () => {
-    const rows = [
-      {
-        id: "uuid-1",
-        draftId: "draft-1",
-        userId: "user-1",
-        idempotencyKey: "key-1",
-        createdAt: new Date(),
-      },
-    ];
-    const mockDb = {
+  it("returns not_found before any update when locked row is missing in postgres", async () => {
+    const updateFn = vi.fn();
+    const insertFn = vi.fn();
+    const tx = {
       select: vi.fn(() => ({
         from: vi.fn(() => ({
           where: vi.fn(() => ({
-            limit: vi.fn(async () => rows),
+            for: vi.fn().mockReturnValue({
+              limit: vi.fn(async () => []),
+            }),
           })),
         })),
       })),
-      insert: vi.fn(),
+      update: updateFn,
+      insert: insertFn,
+    };
+    const db = {
+      transaction: vi.fn(async <T>(cb: (txArg: typeof tx) => Promise<T>) => cb(tx)),
     } as unknown as DbClient;
 
-    const repo = createPostgresDraftRepository(mockDb);
-    const result = await repo.approve("draft-1", "user-1", "key-1");
-    expect(result).toEqual({ idempotencyKey: "key-1" });
-    expect(mockDb.insert).not.toHaveBeenCalled();
+    const repo = createPostgresDraftRepository(db);
+    await expect(repo.approveSelection(approvalMutation({ userId: "user-2" }))).resolves.toEqual({
+      status: "not_found",
+    });
+    expect(updateFn).not.toHaveBeenCalled();
+    expect(insertFn).not.toHaveBeenCalled();
   });
 
-  it("rejects when draft is already approved with different key in postgres", async () => {
-    const rows = [
-      {
-        id: "uuid-1",
-        draftId: "draft-1",
-        userId: "user-1",
-        idempotencyKey: "key-1",
-        createdAt: new Date(),
-      },
-    ];
-    const mockDb = {
+  it("returns conflict before updates when locked row has stale version in postgres", async () => {
+    const updateFn = vi.fn();
+    const insertFn = vi.fn();
+    const tx = {
       select: vi.fn(() => ({
         from: vi.fn(() => ({
           where: vi.fn(() => ({
-            limit: vi.fn(async () => rows),
+            for: vi.fn().mockReturnValue({
+              limit: vi.fn(async () => [{
+                id: editableDraftFixture.id,
+                userId: "user-1",
+                status: "ready",
+                version: 2,
+              }]),
+            }),
+            limit: vi.fn(async () => []),
           })),
         })),
       })),
+      update: updateFn,
+      insert: insertFn,
+    };
+    const db = {
+      transaction: vi.fn(async <T>(cb: (txArg: typeof tx) => Promise<T>) => cb(tx)),
     } as unknown as DbClient;
 
-    const repo = createPostgresDraftRepository(mockDb);
-    await expect(repo.approve("draft-1", "user-1", "key-2")).rejects.toThrow("already approved");
+    const repo = createPostgresDraftRepository(db);
+    await expect(repo.approveSelection(approvalMutation({ expectedDraftVersion: 1 }))).resolves.toEqual({
+      status: "conflict",
+    });
+    expect(updateFn).not.toHaveBeenCalled();
+    expect(insertFn).not.toHaveBeenCalled();
   });
 
-  it("retrieves approval record from postgres", async () => {
+  it("retrieves approval record from postgres scoped to user", async () => {
     const now = new Date();
     const rows = [
       {
@@ -371,7 +873,7 @@ describe("DraftRepository (postgres)", () => {
     } as unknown as DbClient;
 
     const repo = createPostgresDraftRepository(mockDb);
-    const record = await repo.getApproval("draft-1");
+    const record = await repo.getApproval("draft-1", "user-1");
     expect(record).toEqual({
       id: "uuid-1",
       draftId: "draft-1",
@@ -379,60 +881,6 @@ describe("DraftRepository (postgres)", () => {
       idempotencyKey: "key-1",
       createdAt: now,
     });
-  });
-
-  it("rethrows database error when insert fails and draft is not found on recheck", async () => {
-    const dbError = new Error("database connection timeout");
-    const mockDb = {
-      select: vi.fn(() => ({
-        from: vi.fn(() => ({
-          where: vi.fn(() => ({
-            limit: vi.fn(async () => []),
-          })),
-        })),
-      })),
-      insert: vi.fn(() => ({
-        values: vi.fn(async () => {
-          throw dbError;
-        }),
-      })),
-    } as unknown as DbClient;
-
-    const repo = createPostgresDraftRepository(mockDb);
-    await expect(repo.approve("draft-1", "user-1", "key-1")).rejects.toThrow(dbError);
-  });
-
-  it("handles concurrent insert race condition and succeeds on recheck", async () => {
-    let selectCount = 0;
-    const concurrentRow = {
-      id: "uuid-conc",
-      draftId: "draft-conc",
-      userId: "user-conc",
-      idempotencyKey: "key-conc",
-      createdAt: new Date(),
-    };
-
-    const mockDb = {
-      select: vi.fn(() => ({
-        from: vi.fn(() => ({
-          where: vi.fn(() => ({
-            limit: vi.fn(async () => {
-              selectCount++;
-              return selectCount === 1 ? [] : [concurrentRow];
-            }),
-          })),
-        })),
-      })),
-      insert: vi.fn(() => ({
-        values: vi.fn(async () => {
-          throw new Error("unique constraint violation");
-        }),
-      })),
-    } as unknown as DbClient;
-
-    const repo = createPostgresDraftRepository(mockDb);
-    const result = await repo.approve("draft-conc", "user-conc", "key-conc");
-    expect(result).toEqual({ idempotencyKey: "key-conc" });
   });
 
   it("A7-02 writes presentation columns in the item insert", async () => {
@@ -453,11 +901,11 @@ describe("DraftRepository (postgres)", () => {
         .mockImplementationOnce(() => ({ values: vi.fn(async () => []) }))
         .mockImplementationOnce(() => ({ values: itemValues })),
     };
-    const mockDb = {
+    const db = {
       transaction: vi.fn(async (callback: (transaction: typeof tx) => Promise<Draft>) => callback(tx)),
     } as unknown as DbClient;
 
-    await createPostgresDraftRepository(mockDb).save("user-1", {
+    await createPostgresDraftRepository(db).save("user-1", {
       ...draftFixture,
       items: [{
         ...draftFixture.items[0],
@@ -477,3 +925,4 @@ describe("DraftRepository (postgres)", () => {
     })]);
   });
 });
+

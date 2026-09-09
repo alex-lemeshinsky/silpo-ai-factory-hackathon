@@ -186,6 +186,10 @@ Demo mode персистує чернетки під синтетичним ко
 
 Деталі — у [специфікації Task 13](./superpowers/specs/2026-09-08-draft-orchestration-design.md).
 
+### `DraftApprovalService`
+
+Приймає лише IDs, версії та quantity intent для повного набору вихідних позицій. Перевіряє ownership, `ready` status, draft/item versions, allowlisted replacements, `step`, stock і unique active products; відновлює всі product facts із persisted snapshots. `DraftRepository.approveSelection` в одній транзакції блокує draft, зберігає kept/replaced/removed decisions, переводить draft у `confirming` і створює один UUID idempotency key. Повторний або конкурентний запит повертає вже збережений key. Жодного MCP або cart write цей сервіс не виконує.
+
 ### `CartCommitService`
 
 Єдина точка cart write. Перевіряє persisted approval, slot, stock і quantity; зберігає absolute targets до write; виконує write; негайно перечитує кошик; зберігає verified або blocked result.
@@ -275,7 +279,20 @@ customer + cart context
 
 Повне ім'я, телефон, email, точна адреса, loyalty barcode та profile IDs не передаються Gemini.
 
-### 7.4. Cart commit
+### 7.4. Draft editing and approval
+
+```text
+ready draft snapshot
+→ local quantity/remove/replace edits
+→ validate owned draft and item versions
+→ reconstruct selection from persisted snapshots
+→ atomic edited draft + approval
+→ confirming + idempotency key
+```
+
+Removed rows remain decision tombstones but normal draft reads return only active items. The approval route performs no cart call; Task 16 revalidates slot, stock, price and step before write.
+
+### 7.5. Cart commit
 
 1. Прийняти `draftId` і persisted idempotency key.
 2. Перевірити ownership, version і approval.

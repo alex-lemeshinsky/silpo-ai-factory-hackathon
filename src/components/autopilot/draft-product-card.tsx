@@ -1,9 +1,12 @@
+import type { ReactNode } from "react";
 import { effectiveUnitPrice, type CartValidation, type DraftItem } from "@/features/shared/contracts";
 import { formatHryvnia, formatNumber } from "./format";
 
 export interface DraftProductCardProps {
   item: DraftItem;
   validations: CartValidation[];
+  showQuantity?: boolean;
+  children?: ReactNode;
 }
 
 // DraftItemSchema guarantees 0 < quantity <= stock, so a draft item is always
@@ -13,7 +16,12 @@ function stockLabel(item: DraftItem): string {
   return `В наявності: ${formatNumber(item.stock)}`;
 }
 
-export function DraftProductCard({ item, validations }: DraftProductCardProps) {
+export function DraftProductCard({
+  item,
+  validations,
+  showQuantity = true,
+  children,
+}: DraftProductCardProps) {
   return (
     <li className="autopilot-product">
       <div className="autopilot-product-image">
@@ -25,7 +33,10 @@ export function DraftProductCard({ item, validations }: DraftProductCardProps) {
         )}
       </div>
       <h3 className="autopilot-product-name">{item.name}</h3>
-      <p className="autopilot-product-quantity">Кількість: {formatNumber(item.quantity)}</p>
+      {showQuantity && (
+        <p className="autopilot-product-quantity">Кількість: {formatNumber(item.quantity)}</p>
+      )}
+      <p className="autopilot-product-ratio">Фасування: ×{formatNumber(item.displayRatio)}</p>
       <p className="autopilot-product-price">
         <span className="autopilot-price-current">
           {formatHryvnia(effectiveUnitPrice(item))}
@@ -58,6 +69,7 @@ export function DraftProductCard({ item, validations }: DraftProductCardProps) {
           Доступні заміни: {item.alternatives.length}
         </p>
       )}
+      {children}
       {validations.length > 0 && (
         <ul className="autopilot-product-validations">
           {validations.map((validation, index) => (

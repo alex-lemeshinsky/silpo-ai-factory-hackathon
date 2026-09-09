@@ -1,5 +1,5 @@
-import { render, screen, within } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { fireEvent, render, screen, within } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 import {
   CartContextSchema, DraftSchema, effectiveUnitPrice, ProductCandidateSchema, VerifiedCartSchema,
   type CartContext, type Draft, type DraftItem, type ProductCandidate, type VerifiedCart,
@@ -7,6 +7,8 @@ import {
 import {
   DraftDashboard, type ActionableDraft, type DraftDashboardProps,
 } from "./draft-dashboard";
+
+const APPROVAL_KEY = "00000000-0000-4000-8000-0000000000aa";
 
 const item = (overrides: Partial<DraftItem> = {}): DraftItem => ({
   productId: "water-1",
@@ -261,6 +263,7 @@ describe("DraftDashboard", () => {
       phase: {
         kind: "draft",
         draft: draft({
+          status: "confirming",
           items: [item({
             imageUrl: "https://example.test/water.png",
             specialPrice: 15,
@@ -276,6 +279,7 @@ describe("DraftDashboard", () => {
     const product = within(card as HTMLElement);
     expect(product.getByAltText("Вода негазована 1,5 л")).toBeVisible();
     expect(product.getByText("Кількість: 2")).toBeVisible();
+    expect(product.getByText("Фасування: ×1")).toBeVisible();
     expect(product.getByText("15,00 ₴")).toBeVisible();
     expect(product.getByText("Було 20,00 ₴")).toBeVisible();
     expect(product.getByText("Акція тижня: 15,00 ₴")).toBeVisible();
@@ -290,6 +294,7 @@ describe("DraftDashboard", () => {
       phase: {
         kind: "draft",
         draft: draft({
+          status: "confirming",
           items: [item({
             stock: 7.5, quantity: 0.5, step: 0.5, confidence: 0.6, confidenceBand: "medium",
           })],
@@ -321,7 +326,7 @@ describe("DraftDashboard", () => {
   });
 
   it("D14-07 offers no stepper, remove, or replace control", () => {
-    renderDashboard();
+    renderDashboard({ phase: { kind: "draft", draft: draft({ status: "confirming" }) } });
 
     expect(screen.queryByRole("button", { name: /Прибрати|Замінити|Більше|Менше/ })).toBeNull();
   });
@@ -548,7 +553,9 @@ describe("DraftDashboard", () => {
       const source = await readFile(new NodeURL(name, directory), "utf8");
       expect(source, `${name} must not hard-code colour`).not.toMatch(/#[0-9a-fA-F]{3,8}\b|rgba?\(|hsla?\(/);
       expect(source, `${name} must not use inline styles`).not.toContain("style={{");
-      expect(source, `${name} must stay a Server Component`).not.toContain("use client");
+      if (name !== "draft-dashboard.tsx" && name !== "draft-editor.tsx") {
+        expect(source, `${name} must stay a Server Component`).not.toContain("use client");
+      }
     }
   });
 
@@ -576,5 +583,22 @@ describe("DraftDashboard", () => {
     renderDashboard();
 
     expect(screen.queryByRole("heading", { name: "Автопілот" })).toBeNull();
+  });
+
+  it("T15-09 replaces the editor with confirming state after approval", async () => {
+    const approveDraft = vi.fn(async () => ({ idempotencyKey: APPROVAL_KEY }));
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    renderDashboard({ approveDraft });
+
+    fireEvent.click(screen.getByRole("button", { name: "Додати у кошик “Сільпо”" }));
+
+    expect(await screen.findByRole("heading", {
+      level: 2,
+      name: "Перевіряємо ціну та наявність",
+    })).toBeVisible();
+    expect(screen.queryByRole("spinbutton")).toBeNull();
+    expect(screen.queryByRole("link", { name: /Оформити/ })).toBeNull();
+    expect(approveDraft).toHaveBeenCalledOnce();
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 });

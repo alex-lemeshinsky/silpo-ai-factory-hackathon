@@ -1,3 +1,6 @@
+"use client";
+
+import { useEffect, useState } from "react";
 import type {
   CartContext, DataMode, Draft, DraftStatus, VerifiedCart,
 } from "@/features/shared/contracts";
@@ -5,6 +8,12 @@ import { AppHeader } from "./app-header";
 import { DraftOverview } from "./draft-overview";
 import { DraftProductCard } from "./draft-product-card";
 import { DraftSummary } from "./draft-summary";
+import {
+  DraftEditor,
+  type ApproveDraftRequest,
+  type ConfirmingDraft,
+  type EditableDraft,
+} from "./draft-editor";
 import { StatusPanel, ValidationList, type StatusTone } from "./status-panel";
 
 export type PendingStatus = Extract<DraftStatus, "syncing" | "generating">;
@@ -26,6 +35,12 @@ export interface DraftDashboardProps {
   cartContext: CartContext | null;
   loyaltyBonusAvailable: number | null;
   cart: VerifiedCart | null;
+  approveDraft?: ApproveDraftRequest;
+}
+
+interface ApprovedState {
+  idempotencyKey: string;
+  draft: ConfirmingDraft;
 }
 
 interface PanelCopy {
@@ -71,12 +86,43 @@ const DRAFT_PANELS: Partial<Record<ActionableDraft["status"], PanelCopy>> = {
 };
 
 export function DraftDashboard({
-  phase, cartContext, loyaltyBonusAvailable, cart,
+  phase,
+  cartContext,
+  loyaltyBonusAvailable,
+  cart,
+  approveDraft,
 }: DraftDashboardProps) {
-  const mode = phase.kind === "draft" ? phase.draft.mode : phase.mode;
+  const [approved, setApproved] = useState<ApprovedState | null>(null);
+  const sourceDraft = phase.kind === "draft" ? phase.draft : null;
+  const displayedDraft = approved?.draft ?? sourceDraft;
+
+  const phaseDraftId = phase.kind === "draft" ? phase.draft.id : null;
+  const phaseDraftVersion = phase.kind === "draft" ? phase.draft.version : null;
+  const phaseDraftStatus = phase.kind === "draft" ? phase.draft.status : phase.status;
+
+  useEffect(() => {
+    if (phase.kind !== "draft" || phase.draft.status !== "ready") {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- Task 15.5 specifies resetting approved state in an effect on phase change.
+      setApproved(null);
+      return;
+    }
+    setApproved((current) => {
+      if (current === null) return null;
+      if (
+        current.draft.id !== phaseDraftId ||
+        current.draft.version !== (phaseDraftVersion ?? 0) + 1
+      ) {
+        return null;
+      }
+      return current;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only re-run when the draft identity, version, or status changes
+  }, [phaseDraftId, phaseDraftVersion, phaseDraftStatus]);
+
+  const mode = displayedDraft?.mode ?? (phase.kind === "pending" ? phase.mode : phase.draft.mode);
   const panel = phase.kind === "pending"
     ? PENDING_PANELS[phase.status]
-    : DRAFT_PANELS[phase.draft.status];
+    : (displayedDraft ? DRAFT_PANELS[displayedDraft.status] : undefined);
 
   return (
     <>
@@ -85,22 +131,32 @@ export function DraftDashboard({
       <main className="autopilot-main">
         {panel && <StatusPanel {...panel} headingLevel={phase.kind === "pending" ? 1 : 2} />}
         {cart !== null && <ValidationList validations={cart.validations} />}
-        {phase.kind === "draft" && (
+        {displayedDraft !== null && (
           <>
-            <DraftOverview draft={phase.draft} loyaltyBonusAvailable={loyaltyBonusAvailable} />
-            <section className="autopilot-products" aria-labelledby="autopilot-products-title">
-              <h2 id="autopilot-products-title">Ймовірно закінчується</h2>
-              <ul className="autopilot-grid">
-                {phase.draft.items.map((entry) => (
-                  <DraftProductCard
-                    key={entry.productId}
-                    item={entry}
-                    validations={cart?.validations.filter((validation) => validation.productId === entry.productId) ?? []}
-                  />
-                ))}
-              </ul>
-            </section>
-            <DraftSummary draft={phase.draft} cart={cart} />
+            <DraftOverview draft={displayedDraft} loyaltyBonusAvailable={loyaltyBonusAvailable} />
+            {displayedDraft.status === "ready" ? (
+              <DraftEditor
+                draft={displayedDraft as EditableDraft}
+                onApproved={setApproved}
+                approveDraft={approveDraft}
+              />
+            ) : (
+              <>
+                <section className="autopilot-products" aria-labelledby="autopilot-products-title">
+                  <h2 id="autopilot-products-title">Ймовірно закінчується</h2>
+                  <ul className="autopilot-grid">
+                    {displayedDraft.items.map((entry) => (
+                      <DraftProductCard
+                        key={entry.productId}
+                        item={entry}
+                        validations={cart?.validations.filter((validation) => validation.productId === entry.productId) ?? []}
+                      />
+                    ))}
+                  </ul>
+                </section>
+                <DraftSummary draft={displayedDraft} cart={cart} />
+              </>
+            )}
           </>
         )}
       </main>

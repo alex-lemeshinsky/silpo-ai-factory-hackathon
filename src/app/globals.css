@@ -246,3 +246,85 @@ main.autopilot-main {
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; }
 }
+
+.autopilot-editor-actions,
+.autopilot-quantity,
+.autopilot-picker-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--autopilot-space-2);
+  align-items: center;
+}
+
+.autopilot-editor-button,
+.autopilot-quantity button,
+.autopilot-product-removed button {
+  min-width: 44px;
+  min-height: 44px;
+  border: 1px solid var(--autopilot-border);
+  border-radius: var(--autopilot-radius-pill);
+  background: var(--autopilot-surface);
+  color: var(--autopilot-ink);
+}
+
+.autopilot-quantity input {
+  width: 88px;
+  min-height: 44px;
+  border: 1px solid var(--autopilot-border);
+  border-radius: var(--autopilot-radius-sm);
+  padding-inline: var(--autopilot-space-2);
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+}
+
+.autopilot-quantity input[aria-invalid="true"] {
+  border: 2px solid var(--autopilot-danger);
+}
+
+.autopilot-editor-error,
+.autopilot-submit-error,
+.autopilot-quantity-error {
+  color: var(--autopilot-danger);
+  font-size: var(--autopilot-font-small);
+}
+
+.autopilot-product-removed {
+  border: 2px dashed var(--autopilot-border);
+  background: var(--autopilot-bg);
+}
+
+.autopilot-picker {
+  margin: 0;
+  padding: var(--autopilot-space-3);
+  border: 1px solid var(--autopilot-border);
+  border-radius: var(--autopilot-radius-sm);
+}
+
+.autopilot-picker-options {
+  display: grid;
+  gap: var(--autopilot-space-2);
+  margin: var(--autopilot-space-3) 0;
+  padding: 0;
+  list-style: none;
+}
+
+.autopilot-picker label {
+  display: flex;
+  min-height: 44px;
+  gap: var(--autopilot-space-2);
+  align-items: center;
+}
+
+.autopilot-picker-copy {
+  display: grid;
+  flex: 1;
+  gap: var(--autopilot-space-1);
+  min-width: 0;
+}
+
+.autopilot-editor button:disabled,
+.autopilot-editor input:disabled {
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
