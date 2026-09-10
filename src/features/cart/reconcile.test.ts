@@ -51,6 +51,16 @@ describe("reconcileCommit", () => {
     expect(result.checkoutLinks).toBeNull();
   });
 
+  it("reports partial, not blocked, when nothing could be added but nothing is broken", () => {
+    const result = reconcileCommit({
+      targets: {},
+      adjustments: [{ productId: "p-1", code: "stock_capped", message: "Доступно менше, ніж потрібно: кількість зменшено." }],
+      readback: readback(),
+    });
+    expect(result.status).toBe("partially_committed");
+    expect(result.checkoutLinks).toBeNull();
+  });
+
   it("reports partially committed when a target is missing from the cart", () => {
     const result = reconcileCommit({
       targets: { "p-1": 3, "p-2": 1 },

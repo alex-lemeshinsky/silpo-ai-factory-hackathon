@@ -50,9 +50,17 @@ export function reconcileCommit(input: ReconcileCommitInput): VerifiedCart {
     (adjustment) => QUANTITY_ADJUSTMENT_CODES.has(adjustment.code),
   );
 
-  const status = hasError || targetIds.length === 0
+  // Nothing to write is only a blocker when something is genuinely
+  // unavailable. A cart that simply cannot take more of a product is not
+  // broken, so it is reported as a partial commit rather than as blocked.
+  const nothingTargeted = targetIds.length === 0;
+  const anythingUnavailable = input.adjustments.some(
+    (adjustment) => adjustment.code === "unavailable_product",
+  );
+
+  const status = hasError || (nothingTargeted && anythingUnavailable)
     ? "blocked"
-    : unmet || quantityAdjusted
+    : nothingTargeted || unmet || quantityAdjusted
       ? "partially_committed"
       : "verified";
 

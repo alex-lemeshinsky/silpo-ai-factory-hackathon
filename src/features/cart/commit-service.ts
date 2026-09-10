@@ -10,10 +10,13 @@ import {
   type VerifiedCart,
 } from "@/features/shared/contracts";
 import type { DraftRepository } from "@/features/drafts/repository";
-import { classifyGatewayError, type SilpoGatewayHandle } from "@/features/silpo/gateway";
+import type { SilpoGatewayHandle } from "@/features/silpo/gateway";
+import { MissingCartBranchError } from "@/features/silpo/live/cart";
+import { McpCallError } from "@/features/silpo/live/session";
 import { err, ok, type Result } from "@/lib/result";
 
 import { BASELINE_DEPENDENT_ADJUSTMENT_CODES, planCommit, type CommitAdjustment } from "./plan";
+import { PlannedCartCommitSchema, type CartCommitRecord } from "./repository";
 import { reconcileCommit } from "./reconcile";
 import type { CartCommitRepository } from "./repository";
 
@@ -29,6 +32,7 @@ export type CartCommitFailureCode =
   | "approval_required"
   | "needs_slot"
   | "unauthorized"
+  | "cart_incomplete"
   | "commit_uncertain"
   | "unexpected";
 
@@ -51,6 +55,7 @@ const FAILURE_COPY: Record<CartCommitFailureCode, string> = {
   approval_required: "Спочатку підтвердьте чернетку.",
   needs_slot: "Оберіть доступний час доставки.",
   unauthorized: "Не вдалося підтвердити вхід. Увійдіть у «Сільпо» ще раз.",
+  cart_incomplete: "Кошик «Сільпо» не готовий: перевірте адресу та магазин доставки.",
   commit_uncertain: "Не вдалося підтвердити запис у кошик. Спробуйте ще раз.",
   unexpected: "Не вдалося оновити кошик. Спробуйте ще раз.",
 };
@@ -112,6 +117,43 @@ function retryReportableAdjustments(adjustments: CommitAdjustment[]): CommitAdju
   return adjustments.filter(
     (adjustment) => !BASELINE_DEPENDENT_ADJUSTMENT_CODES.has(adjustment.code),
   );
+}
+
+/**
+ * The adjustments that shaped the persisted targets, if the record carries
+ * them. A record written before this field existed has none, and the retry
+ * falls back to what it can safely re-derive.
+ */
+function plannedAdjustmentsOf(record: CartCommitRecord): CommitAdjustment[] | null {
+  const parsed = PlannedCartCommitSchema.safeParse(record.result);
+  return parsed.success ? parsed.data.adjustments : null;
+}
+
+/** Union by product and code, keeping the persisted entry when both carry one. */
+function mergeAdjustments(
+  persisted: CommitAdjustment[],
+  fresh: CommitAdjustment[],
+): CommitAdjustment[] {
+  const seen = new Set(persisted.map((entry) => `${entry.productId}::${entry.code}`));
+  return [
+    ...persisted,
+    ...fresh.filter((entry) => !seen.has(`${entry.productId}::${entry.code}`)),
+  ];
+}
+
+/**
+ * Maps a gateway failure raised by a cart write. Mirrors the classification in
+ * `src/features/drafts/service.ts` rather than introducing a second one.
+ */
+function writeFailureCode(error: unknown): CartCommitFailureCode {
+  // The server rejected the call, so nothing was written. Inviting a retry
+  // would loop forever on credentials that only reauthorization renews.
+  if (error instanceof McpCallError && error.status === 401) return "unauthorized";
+  // Raised before the write; every retry would re-read the same cart.
+  if (error instanceof MissingCartBranchError) return "cart_incomplete";
+  // Never retried here. The record stays `pending`, so the next request with
+  // this key reuses the same absolute targets.
+  return "commit_uncertain";
 }
 
 const currentQuantitiesOf = (cart: VerifiedCart): Record<string, number> =>
@@ -198,7 +240,12 @@ export async function commitApprovedDraft(
     let adjustments: CommitAdjustment[];
     if (existing) {
       targets = existing.targetQuantities;
-      adjustments = retryReportableAdjustments(plan.adjustments);
+      // The persisted plan is what actually shaped these targets. Fresh
+      // baseline-independent findings are added on top, so a retry reports the
+      // original cap *and* anything that changed since.
+      const planned = plannedAdjustmentsOf(existing);
+      const fresh = retryReportableAdjustments(plan.adjustments);
+      adjustments = planned === null ? fresh : mergeAdjustments(planned, fresh);
     } else if (Object.keys(plan.targets).length === 0) {
       // `cart_commits.target_quantities` rejects an empty map, so there is no
       // record to persist and nothing to write.
@@ -217,6 +264,7 @@ export async function commitApprovedDraft(
         userId: input.userId,
         draftId: input.draftId,
         confirmationTimestamp: now(),
+        adjustments: plan.adjustments,
       });
       targets = started.targetQuantities;
       adjustments = plan.adjustments;
@@ -229,19 +277,7 @@ export async function commitApprovedDraft(
         addQuantity: false,
       });
     } catch (error) {
-      const kind = classifyGatewayError(error);
-      if (kind === "unauthorized") {
-        // The server rejected the call, so nothing was written. Inviting a
-        // retry here would loop forever on credentials that need renewing.
-        return failure("unauthorized", input.correlationId);
-      }
-      if (kind === "cart_incomplete") {
-        // Raised before the write. Every retry would re-read the same cart.
-        return failure("unexpected", input.correlationId);
-      }
-      // Never retried here. The record stays `pending`, so the next request
-      // with this key reuses the same absolute targets.
-      return failure("commit_uncertain", input.correlationId);
+      return failure(writeFailureCode(error), input.correlationId);
     }
 
     const after = await gateway.readCart(cartContext.cartId);
@@ -261,8 +297,8 @@ export async function commitApprovedDraft(
   } catch (error) {
     // A read that fails on an expired token must say so too, or the user is
     // told to retry something only reauthorization can fix.
-    const code = classifyGatewayError(error) === "unauthorized" ? "unauthorized" : "unexpected";
-    return failure(code, input.correlationId);
+    const unauthorized = error instanceof McpCallError && error.status === 401;
+    return failure(unauthorized ? "unauthorized" : "unexpected", input.correlationId);
   } finally {
     // A failure to close never masks the commit's own outcome.
     await handle?.close().catch(() => {});

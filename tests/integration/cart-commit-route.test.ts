@@ -291,6 +291,7 @@ describe("POST /api/cart/commit", () => {
     ["approval_required", 409],
     ["needs_slot", 409],
     ["unauthorized", 401],
+    ["cart_incomplete", 409],
     ["commit_uncertain", 502],
     ["unexpected", 500],
   ] as const)("T16-23 maps every service failure code to its status: %s -> %i", async (code, expectedStatus) => {

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { DbClient } from "@/db/client";
 import {
   createInMemoryCartCommitRepository,
+  PlannedCartCommitSchema,
   createPostgresCartCommitRepository,
 } from "./repository";
 
@@ -302,5 +303,53 @@ describe("CartCommitRepository (postgres)", () => {
 
     expect(result.idempotencyKey).toBe("k-conc");
     expect(result.targetQuantities).toEqual({ p1: 5 });
+  });
+});
+
+describe("planned adjustments on a pending record", () => {
+  it("persists the plan that shaped the targets and reads it back", async () => {
+    const repo = createInMemoryCartCommitRepository();
+    const adjustments = [{
+      productId: "p-1",
+      code: "stock_capped" as const,
+      message: "Доступно менше, ніж потрібно: кількість зменшено.",
+    }];
+
+    await repo.start({ key: "k-plan", targetQuantities: { "p-1": 3 }, adjustments });
+
+    const record = await repo.get("k-plan");
+    expect(record?.status).toBe("pending");
+    expect(PlannedCartCommitSchema.parse(record?.result).adjustments).toEqual(adjustments);
+  });
+
+  it("leaves the result null when a commit is planned without adjustments", async () => {
+    const repo = createInMemoryCartCommitRepository();
+    await repo.start({ key: "k-clean", targetQuantities: { "p-1": 3 } });
+    expect((await repo.get("k-clean"))?.result).toBeNull();
+  });
+
+  it("replaces the plan with the terminal result once the commit resolves", async () => {
+    const repo = createInMemoryCartCommitRepository();
+    await repo.start({
+      key: "k-done",
+      targetQuantities: { "p-1": 3 },
+      adjustments: [{ productId: "p-1", code: "price_changed", message: "Ціна змінилася після створення чернетки." }],
+    });
+
+    await repo.saveResult("k-done", { status: "verified", data: { ok: true } });
+
+    const record = await repo.get("k-done");
+    expect(record?.status).toBe("verified");
+    expect(PlannedCartCommitSchema.safeParse(record?.result).success).toBe(false);
+    expect(record?.result).toEqual({ status: "verified", data: { ok: true } });
+  });
+
+  it("rejects a malformed adjustment rather than storing it", async () => {
+    const repo = createInMemoryCartCommitRepository();
+    await expect(repo.start({
+      key: "k-bad",
+      targetQuantities: { "p-1": 3 },
+      adjustments: [{ productId: "p-1", code: "made_up", message: "x" }] as never,
+    })).rejects.toThrow();
   });
 });

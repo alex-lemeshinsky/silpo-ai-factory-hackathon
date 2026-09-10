@@ -471,8 +471,110 @@ describe("commitApprovedDraft", () => {
 
     const result = await runCommit({ drafts, commits: createInMemoryCartCommitRepository(), handle });
 
-    // Not commit_uncertain: every retry would re-read the same branch-less cart.
-    expect(result).toMatchObject({ ok: false, error: { code: "unexpected" } });
+    // Not commit_uncertain: every retry would re-read the same branch-less
+    // cart, and the copy must not invite one.
+    expect(result).toEqual({
+      ok: false,
+      error: {
+        code: "cart_incomplete",
+        message: "Кошик «Сільпо» не готовий: перевірте адресу та магазин доставки.",
+        correlationId: "c1",
+      },
+    });
+  });
+
+  it("T16-07g replays the cap that shaped the persisted target on a retry", async () => {
+    const drafts = createInMemoryDraftRepository();
+    const bigDraft: Draft = {
+      ...confirmingDraft,
+      items: [draftItem({ quantity: 5 })],
+      total: 124.5,
+    };
+    await setupApprovedDraft(drafts, bigDraft, KEY);
+    const commits = createInMemoryCartCommitRepository();
+
+    // First attempt: empty cart, 5 approved, stock 3 -> target capped to 3.
+    await commits.start({
+      key: KEY,
+      targetQuantities: { "p-1": 3 },
+      userId: USER,
+      draftId: DRAFT_ID,
+      adjustments: [{
+        productId: "p-1",
+        code: "stock_capped",
+        message: "Доступно менше, ніж потрібно: кількість зменшено.",
+      }],
+    });
+
+    const { handle } = makeGateway({
+      readCart: vi.fn()
+        .mockResolvedValueOnce(cartAfterWrite({ items: [], total: 0 }))
+        .mockResolvedValueOnce(cartAfterWrite()),
+      findProducts: vi.fn(async (_c, queries: string[]) =>
+        queries.map((q) => ({ query: q, products: [productFor(q, { stock: 3 })] })),
+      ),
+    });
+
+    const result = await runCommit({ drafts, commits, handle });
+
+    if (!result.ok) throw new Error("expected success");
+    // The user approved 5 and the cart holds 3. Reporting `verified` here
+    // would tell them everything landed.
+    expect(result.value.validations.map((entry) => entry.code)).toContain("stock_capped");
+    expect(result.value.status).toBe("partially_committed");
+    expect(result.value.checkoutLinks).toBeNull();
+  });
+
+  it("T16-07h does not double-report a cap the persisted plan already carries", async () => {
+    const drafts = createInMemoryDraftRepository();
+    await setupApprovedDraft(drafts, confirmingDraft, KEY);
+    const commits = createInMemoryCartCommitRepository();
+    await commits.start({
+      key: KEY,
+      targetQuantities: { "p-1": 3 },
+      userId: USER,
+      draftId: DRAFT_ID,
+      adjustments: [{
+        productId: "p-1",
+        code: "stock_capped",
+        message: "Доступно менше, ніж потрібно: кількість зменшено.",
+      }],
+    });
+
+    const { handle } = makeGateway({
+      findProducts: vi.fn(async (_c, queries: string[]) =>
+        queries.map((q) => ({ query: q, products: [productFor(q, { stock: 3 })] })),
+      ),
+    });
+
+    const result = await runCommit({ drafts, commits, handle });
+
+    if (!result.ok) throw new Error("expected success");
+    const capped = result.value.validations.filter((entry) => entry.code === "stock_capped");
+    expect(capped).toHaveLength(1);
+  });
+
+  it("T16-11b reports a cart that simply cannot take more as partial, not blocked", async () => {
+    const drafts = createInMemoryDraftRepository();
+    await setupApprovedDraft(drafts, confirmingDraft, KEY);
+
+    // Cart already holds 5, stock is 3: nothing can be added, nothing is
+    // broken, and the line must be left exactly as the user left it.
+    const { gateway, handle } = makeGateway({
+      readCart: vi.fn().mockResolvedValue(cartAfterWrite({
+        items: [{ productId: "p-1", quantity: 5, unitPrice: 24.9, available: true }],
+        total: 124.5,
+      })),
+      findProducts: vi.fn(async (_c, queries: string[]) =>
+        queries.map((q) => ({ query: q, products: [productFor(q, { stock: 3 })] })),
+      ),
+    });
+
+    const result = await runCommit({ drafts, commits: createInMemoryCartCommitRepository(), handle });
+
+    if (!result.ok) throw new Error("expected success");
+    expect(gateway.setAbsoluteCartQuantities).not.toHaveBeenCalled();
+    expect(result.value.status).toBe("partially_committed");
   });
 
   it("T16-08 replays a terminal record without touching the cart", async () => {

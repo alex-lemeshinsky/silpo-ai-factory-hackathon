@@ -61,6 +61,7 @@ const STATUS_BY_CODE: Record<CartCommitFailureCode, number> = {
   approval_required: 409,
   needs_slot: 409,
   unauthorized: 401,
+  cart_incomplete: 409,
   // The one retryable failure: the client repeats the request with the same
   // key and the service reuses the persisted absolute targets.
   commit_uncertain: 502,

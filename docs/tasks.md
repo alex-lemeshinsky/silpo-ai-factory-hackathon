@@ -1144,6 +1144,8 @@ git commit -m "feat: commit verified Silpo carts"
 
 Ревʼю 2026-09-10 виявило вісім дефектів; усі виправлено в тому ж таскові. Змінені правила: target ніколи не опускається нижче поточної кількості в кошику; повтор не переобчислює `stock_capped`/`step_adjusted`; `price_changed` більше не ховає checkout; оновлення каталогу зіставляється за `productId`, а не за echo-запитом; `401` мапиться в `unauthorized`, а не `commit_uncertain`; кошик без branch зупиняється до запису; порожній checkout-URL нормалізується в `null`; `recordCommitOutcome` знову обовʼязковий у `DraftRepository`. Специфікацію та архітектуру оновлено відповідно.
 
+Друге ревʼю 2026-09-10 знайшло пʼять дефектів, зокрема регресію з першого раунду: фільтр коригувань на повторі відкидав і той cap, який сформував збережений target, тож частково виконаний commit звітував `verified`. Виправлено: коригування зберігаються в `cart_commits.result` (`{ phase: "planned", adjustments }`) і відтворюються на повторі; порожня мапа targets дає `blocked` лише за справжньої недоступності; кошик без branch має власний код `cart_incomplete` (409) без запрошення до повтору; класифікацію помилок повернуто до наявного шаблону `drafts/service.ts` замість нового classifier у `gateway.ts`; прибрано недосяжний fallback у `planCommit`.
+
 ---
 
 ### Task 17: Demo diagnostics and sanitized MCP trace

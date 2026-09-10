@@ -2,6 +2,7 @@ import { eq } from "drizzle-orm";
 import { z } from "zod";
 import type { DbClient } from "@/db/client";
 import { cartCommits } from "@/db/schema";
+import { CommitAdjustmentSchema, type CommitAdjustment } from "./plan";
 
 export type CartCommitStatus = "pending" | "partially_committed" | "verified" | "blocked";
 
@@ -24,6 +25,13 @@ export interface StartCartCommitInput {
   userId?: string;
   draftId?: string;
   confirmationTimestamp?: Date;
+  /**
+   * The pre-write adjustments that shaped `targetQuantities`. Persisted with
+   * the record because a retry writes these targets without recomputing them,
+   * and a cap re-derived against a cart that already holds the first write is
+   * not the cap that produced the target.
+   */
+  adjustments?: CommitAdjustment[];
 }
 
 export interface SaveCartCommitResultInput {
@@ -47,12 +55,28 @@ const savedCartCommitResultSchema = z.object({
   status: z.enum(["verified", "blocked", "partially_committed"]),
   data: z.unknown().optional(),
 }).strict();
+
+/**
+ * What `result` holds while a commit is still `pending`. `saveResult` replaces
+ * it with the terminal result, so the column carries exactly one meaning at a
+ * time and no schema migration is needed to remember the plan.
+ */
+export const PlannedCartCommitSchema = z.object({
+  phase: z.literal("planned"),
+  adjustments: z.array(CommitAdjustmentSchema),
+}).strict();
+
+const storedCartCommitResultSchema = z.union([
+  savedCartCommitResultSchema,
+  PlannedCartCommitSchema,
+]);
 const startCartCommitInputSchema = z.object({
   key: nonEmptyString,
   targetQuantities: targetQuantitiesSchema,
   userId: nonEmptyString.optional(),
   draftId: nonEmptyString.optional(),
   confirmationTimestamp: validDate.optional(),
+  adjustments: z.array(CommitAdjustmentSchema).optional(),
 }).strict();
 const saveCartCommitResultInputSchema = savedCartCommitResultSchema;
 const cartCommitRecordSchema = z.object({
@@ -63,7 +87,7 @@ const cartCommitRecordSchema = z.object({
   targetQuantities: targetQuantitiesSchema,
   status: cartCommitStatusSchema,
   confirmationTimestamp: validDate.nullable().optional(),
-  result: savedCartCommitResultSchema.nullable().optional(),
+  result: storedCartCommitResultSchema.nullable().optional(),
   createdAt: validDate.optional(),
   updatedAt: validDate.optional(),
 }).strict();
@@ -92,7 +116,9 @@ export function createInMemoryCartCommitRepository(): CartCommitRepository {
         draftId: parsedInput.draftId ?? null,
         status: "pending",
         confirmationTimestamp,
-        result: null,
+        result: parsedInput.adjustments
+          ? { phase: "planned" as const, adjustments: parsedInput.adjustments }
+          : null,
         createdAt: now,
         updatedAt: now,
       };
@@ -151,6 +177,9 @@ export function createPostgresCartCommitRepository(db: DbClient): CartCommitRepo
             draftId: parsedInput.draftId ?? null,
             confirmationTimestamp,
             status: "pending",
+            result: parsedInput.adjustments
+              ? { phase: "planned", adjustments: parsedInput.adjustments }
+              : null,
           })
           .returning();
 

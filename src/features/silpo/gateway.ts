@@ -5,7 +5,6 @@ import { createLiveCartContextGateway } from "./live/cart-context";
 import { createLiveCatalogGateway } from "./live/catalog";
 import { createLiveHistoryGateway } from "./live/history";
 import {
-  McpCallError,
   openReadSession,
   openWriteSession,
   type McpSession,
@@ -22,21 +21,7 @@ import type { SilpoOAuthProvider } from "./oauth/transport";
  */
 export const DRAFT_MCP_OPERATION_TIMEOUT_MS = 60_000;
 
-import { createLiveCartGateway, MissingCartBranchError } from "./live/cart";
-
-/** Gateway failures an application service must not report as a generic retry. */
-export type GatewayFailureKind = "unauthorized" | "cart_incomplete";
-
-/**
- * Classifies a gateway failure without making callers import the transport.
- * An expired token must lead to reauthorization rather than to an invitation
- * to retry forever, and a branch-less cart can never succeed on a retry.
- */
-export function classifyGatewayError(error: unknown): GatewayFailureKind | null {
-  if (error instanceof McpCallError && error.status === 401) return "unauthorized";
-  if (error instanceof MissingCartBranchError) return "cart_incomplete";
-  return null;
-}
+import { createLiveCartGateway } from "./live/cart";
 
 export interface SilpoGatewayHandle {
   gateway: SilpoGateway;

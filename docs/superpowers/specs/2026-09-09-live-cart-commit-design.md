@@ -1,6 +1,6 @@
 # Task 16 Idempotent Live Cart Commit and Verification Design
 
-Status: approved design, implemented and revised after code review on 2026-09-10
+Status: approved design, implemented and revised after two code-review rounds on 2026-09-10
 
 ## 1. Scope and authority
 
@@ -57,6 +57,7 @@ One product rule is unreachable because of the same gap. The product specificati
 | Target arithmetic | The absolute target for a product is its current cart quantity plus the approved quantity, computed exactly once and persisted before the write. |
 | Retry safety | A retry reuses the persisted targets verbatim and never recomputes them from a cart that the first attempt may already have changed. With `addQuantity=false`, repeating the same absolute quantities is a no-op. |
 | Refresh on retry | The catalog refresh runs on every attempt but is privileged only on the first, where it feeds the target computation. On a retry it contributes only the validations that do not depend on the cart's current quantity — availability and price. A re-derived cap or step alignment is discarded, because the retry is not recomputing the target it writes and would otherwise invent a warning that was never true of it. |
+| Persisted plan | The adjustments that shaped the targets are persisted with them and replayed on a retry, merged with whatever the fresh refresh newly found. Filtering re-derived adjustments alone is not enough: a cap that genuinely reduced the target looks identical to one re-derived against a moved baseline, and dropping both would report a short-filled commit as `verified`. |
 | Product refresh key | `DraftItem` carries no slug, and every other catalog port is slug-keyed. The refresh is one `findProducts` batch over item names, matched strictly by `productId` across every returned product. The match never joins on `ProductSearchResult.query`, which is the term the server echoes back: joining on that text would make the whole commit depend on Silpo not normalizing it. A name that returns no matching `productId` is unresolvable, never a fuzzy match. |
 | Outcome authority | The service derives the terminal status from persisted targets, pre-write adjustments, and readback validations. It never re-emits the gateway's own status verbatim, so live and demo produce identical outcomes from identical facts. |
 | Pure arithmetic | Target planning and outcome reconciliation are pure functions in their own modules, unit-tested without gateway fakes. |
@@ -151,7 +152,7 @@ export function reconcileCommit(input: ReconcileCommitInput): VerifiedCart;
 Rules, evaluated in order:
 
 - validations are the readback's validations plus one warning per adjustment, each carrying its `productId`;
-- an empty target map yields `blocked` with `checkoutLinks: null`, because nothing from this draft can reach a checkout;
+- an empty target map yields `blocked` only when something was genuinely unavailable; a cart that simply cannot take more of a product is not broken, so it yields `partially_committed`. Either way `checkoutLinks` is `null`, because none of the approved additions happened;
 - any error validation yields `blocked` with `checkoutLinks: null`;
 - otherwise any adjustment that changed a quantity (`unavailable_product`, `stock_capped`, `step_adjusted`), any target whose product is missing from the readback, and any target whose readback quantity is below the target yields `partially_committed` with `checkoutLinks: null`. A `price_changed` warning alone does not;
 - otherwise the result is `verified` and the readback's checkout links are returned unchanged.
@@ -175,6 +176,7 @@ export type CartCommitFailureCode =
   | "approval_required"
   | "needs_slot"
   | "unauthorized"
+  | "cart_incomplete"
   | "commit_uncertain"
   | "unexpected";
 
@@ -198,7 +200,7 @@ export function commitApprovedDraft(
 ): Promise<Result<VerifiedCart, CartCommitFailure>>;
 ```
 
-A gateway failure is classified before it is reported. An expired token becomes `unauthorized`, never `commit_uncertain`: the server rejected the call, so nothing was written, and inviting a retry would loop forever on credentials that only reauthorization can renew. A cart that carries no branch becomes `unexpected` for the same reason — every retry would re-read the same cart.
+A gateway failure is classified before it is reported, mirroring the classification in `src/features/drafts/service.ts` rather than introducing a second one. An expired token becomes `unauthorized`, never `commit_uncertain`: the server rejected the call, so nothing was written, and inviting a retry would loop forever on credentials that only reauthorization can renew. A cart that carries no branch becomes `cart_incomplete`, whose copy names the cart as the thing to fix instead of inviting a retry that would re-read the same cart.
 
 `availableSlots` is present only on `needs_slot`. Every failure carries safe Ukrainian copy and the correlation ID; no failure carries a URL, header, token, tool argument, or stack trace.
 
@@ -248,7 +250,7 @@ It updates `drafts.status` and `updated_at` for the owning user only. It does no
 
 Recording the outcome is the last step of a successful commit and never changes the value the service returns. A `conflict` or `not_found` here is logged and swallowed: the cart has already been written and verified, and failing the response would tell the user the opposite of what happened.
 
-`CartCommitRepository` is unchanged. `start` is already idempotent by key and returns the existing record when one is present, which is exactly the retry semantics the protocol needs.
+`CartCommitRepository.start` gains an optional `adjustments` argument. While a commit is `pending`, `result` holds `{ phase: "planned", adjustments }`; `saveResult` replaces it with the terminal result, so the column carries exactly one meaning at a time and no migration is required. `start` remains idempotent by key and returns the existing record when one is present, which is exactly the retry semantics the protocol needs.
 
 ## 10. Route and identity
 
@@ -271,6 +273,7 @@ Identity resolution matches the approve route exactly: in demo mode the demo coo
 | missing or mismatched approval | 409 | `approval_required` |
 | no valid slot | 409 | `needs_slot` with `availableSlots` |
 | expired credentials | 401 | `unauthorized` |
+| cart missing its branch | 409 | `cart_incomplete` |
 | uncertain write result | 502 | `commit_uncertain` |
 | anything else | 500 | `unexpected` |
 

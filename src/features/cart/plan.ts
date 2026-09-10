@@ -1,3 +1,5 @@
+import { z } from "zod";
+
 import type { DraftItem, ProductCandidate } from "@/features/shared/contracts";
 
 export type CommitAdjustmentCode =
@@ -33,6 +35,13 @@ export const BASELINE_DEPENDENT_ADJUSTMENT_CODES: ReadonlySet<CommitAdjustmentCo
   "stock_capped",
   "step_adjusted",
 ]);
+
+/** Validates adjustments read back from the commit record. */
+export const CommitAdjustmentSchema = z.object({
+  productId: z.string().trim().min(1),
+  code: z.enum(["unavailable_product", "stock_capped", "step_adjusted", "price_changed"]),
+  message: z.string().trim().min(1),
+}).strict();
 
 export interface PlanCommitInput {
   approvedItems: DraftItem[];
@@ -121,10 +130,10 @@ export function planCommit(input: PlanCommitInput): CommitPlan {
     // flooring lands at or below what the cart already holds there is nothing
     // to add, so the existing line is left untouched rather than written down
     // to a smaller absolute quantity.
+    // Reaching here means a cap or a step floor reduced the target, because
+    // `item.quantity` is positive, so `pending` always explains the cause.
     if (target <= current) {
-      adjustments.push(...(pending.length > 0
-        ? pending
-        : [{ productId: item.productId, code: "stock_capped" as const, message: STOCK_CAPPED_COPY }]));
+      adjustments.push(...pending);
       continue;
     }
 
