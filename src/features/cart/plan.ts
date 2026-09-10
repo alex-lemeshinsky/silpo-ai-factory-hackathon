@@ -12,6 +12,28 @@ export interface CommitAdjustment {
   message: string;
 }
 
+/**
+ * Adjustments that changed how much would be written. Only these may keep a
+ * commit out of `verified`: a price change is news the user should see, not a
+ * reason to hide a checkout for a cart that got exactly what was approved.
+ */
+export const QUANTITY_ADJUSTMENT_CODES: ReadonlySet<CommitAdjustmentCode> = new Set([
+  "unavailable_product",
+  "stock_capped",
+  "step_adjusted",
+]);
+
+/**
+ * Adjustments that only mean something against the baseline that produced the
+ * targets. A retry does not recompute targets, so re-deriving these against a
+ * cart that may already contain the first write invents warnings that were
+ * never true of the persisted target.
+ */
+export const BASELINE_DEPENDENT_ADJUSTMENT_CODES: ReadonlySet<CommitAdjustmentCode> = new Set([
+  "stock_capped",
+  "step_adjusted",
+]);
+
 export interface PlanCommitInput {
   approvedItems: DraftItem[];
   currentQuantities: Record<string, number>;
@@ -77,7 +99,8 @@ export function planCommit(input: PlanCommitInput): CommitPlan {
       pending.push({ productId: item.productId, code: "price_changed", message: PRICE_CHANGED_COPY });
     }
 
-    let target = (input.currentQuantities[item.productId] ?? 0) + item.quantity;
+    const current = input.currentQuantities[item.productId] ?? 0;
+    let target = current + item.quantity;
 
     if (target > product.stock) {
       target = product.stock;
@@ -91,6 +114,17 @@ export function planCommit(input: PlanCommitInput): CommitPlan {
 
     if (target < product.step) {
       exclude(item.productId);
+      continue;
+    }
+
+    // The approval authorizes adding, never removing. When capping or
+    // flooring lands at or below what the cart already holds there is nothing
+    // to add, so the existing line is left untouched rather than written down
+    // to a smaller absolute quantity.
+    if (target <= current) {
+      adjustments.push(...(pending.length > 0
+        ? pending
+        : [{ productId: item.productId, code: "stock_capped" as const, message: STOCK_CAPPED_COPY }]));
       continue;
     }
 

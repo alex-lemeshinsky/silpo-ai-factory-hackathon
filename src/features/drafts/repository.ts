@@ -64,12 +64,8 @@ export interface DraftRepository {
   get(draftId: string, userId: string): Promise<Draft | null>;
   getApproval(draftId: string, userId: string): Promise<DraftApprovalRecord | null>;
   approveSelection(input: PersistDraftApprovalInput): Promise<PersistDraftApprovalResult>;
-  recordCommitOutcome?(input: RecordCommitOutcomeInput): Promise<RecordCommitOutcomeResult>;
-}
-
-export type CompleteDraftRepository = DraftRepository & {
   recordCommitOutcome(input: RecordCommitOutcomeInput): Promise<RecordCommitOutcomeResult>;
-};
+}
 
 const nonEmptyString = z.string().trim().min(1);
 
@@ -200,7 +196,7 @@ interface MemoryDraftRow {
   }>;
 }
 
-export function createInMemoryDraftRepository(): CompleteDraftRepository {
+export function createInMemoryDraftRepository(): DraftRepository {
   const draftsById = new Map<string, MemoryDraftRow>();
   const approvalsByDraftId = new Map<string, DraftApprovalRecord>();
   const draftIdByKey = new Map<string, string>();
@@ -359,7 +355,7 @@ export function createInMemoryDraftRepository(): CompleteDraftRepository {
   };
 }
 
-export function createPostgresDraftRepository(db: DbClient): CompleteDraftRepository {
+export function createPostgresDraftRepository(db: DbClient): DraftRepository {
   return {
     async save(userId: string, draft: Draft, options?: SaveDraftOptions): Promise<Draft> {
       const parsedUserId = nonEmptyString.parse(userId);

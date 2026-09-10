@@ -1142,6 +1142,8 @@ git commit -m "feat: commit verified Silpo carts"
 
 Виконано 2026-09-09. Специфікація: [spec](./superpowers/specs/2026-09-09-live-cart-commit-design.md), план: [plan](./superpowers/plans/2026-09-09-live-cart-commit.md). Реалізовано ідемпотентний live cart commit: pre-write перевірка approval, slot validation, розрахунок і збереження absolute targets (`addQuantity=false`), readback-верифікація, узгодження результатів (`verified`, `partially_committed`, `blocked`) та маршрут `POST /api/cart/commit`. Перевірено focused tests, cumulative tests, lint, typecheck і webpack build. Перенесені ризики: непідтверджені на live-сервері точні назви полів рядків та checkout у схемі кошика Silpo (потребує live MCP inspection з реальними credentials) та відсутність клієнтської реалізації (unowned client story для commit flow), яка блокує Task 18. Live cart write smoke не виконувався без явного ручного підтвердження.
 
+Ревʼю 2026-09-10 виявило вісім дефектів; усі виправлено в тому ж таскові. Змінені правила: target ніколи не опускається нижче поточної кількості в кошику; повтор не переобчислює `stock_capped`/`step_adjusted`; `price_changed` більше не ховає checkout; оновлення каталогу зіставляється за `productId`, а не за echo-запитом; `401` мапиться в `unauthorized`, а не `commit_uncertain`; кошик без branch зупиняється до запису; порожній checkout-URL нормалізується в `null`; `recordCommitOutcome` знову обовʼязковий у `DraftRepository`. Специфікацію та архітектуру оновлено відповідно.
+
 ---
 
 ### Task 17: Demo diagnostics and sanitized MCP trace

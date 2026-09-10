@@ -71,9 +71,20 @@ export type SilpoCartProductLine = z.infer<typeof CartProductLineSchema>;
  * Checkout targets are copied verbatim. Whether a link may be shown is a
  * domain rule enforced by `VerifiedCartSchema`, not a parsing rule.
  */
+/**
+ * A cart that is not checkout-ready reports its links as empty strings rather
+ * than omitting them, so an empty value is normalized to `null` instead of
+ * failing the whole readback. This runs after a write, where a parse failure
+ * would hide a commit that actually succeeded.
+ */
+const optionalCheckoutUrl = z.preprocess(
+  (value) => (typeof value === "string" && value.trim() === "" ? null : value),
+  nonEmptyString.nullable().default(null),
+);
+
 export const CartCheckoutSchema = z.object({
-  webUrl: nonEmptyString.nullable().default(null),
-  mobileUrl: nonEmptyString.nullable().default(null),
+  webUrl: optionalCheckoutUrl,
+  mobileUrl: optionalCheckoutUrl,
 });
 export type SilpoCartCheckout = z.infer<typeof CartCheckoutSchema>;
 

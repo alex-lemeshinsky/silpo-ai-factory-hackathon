@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { z } from "zod";
 
-import { createLiveCartGateway, mapCartValidationSeverity } from "@/features/silpo/live/cart";
+import { createLiveCartGateway, MissingCartBranchError, mapCartValidationSeverity } from "@/features/silpo/live/cart";
 import { UnadvertisedToolError, type McpSession } from "@/features/silpo/live/session";
 
 const READ_TOOLS = ["silpo_get_shopping_cart_by_id"];
@@ -140,6 +140,27 @@ describe("createLiveCartGateway.setAbsoluteCartQuantities", () => {
       items: [{ productId: "p-1", quantity: 3 }],
       addQuantity: true as unknown as false,
     })).rejects.toThrow();
+    expect(writeSession.calls).toHaveLength(0);
+  });
+});
+
+describe("createLiveCartGateway branch guard", () => {
+  it("refuses to write a cart that carries no branch", async () => {
+    const readSession = createFakeSession(READ_TOOLS, {
+      silpo_get_shopping_cart_by_id: () => ({ structuredContent: { ...baseCart, branchId: null } }),
+    });
+    const writeSession = createFakeSession(WRITE_TOOLS, {
+      silpo_add_or_update_cart_products: () => ({ structuredContent: { ok: true } }),
+    }, false);
+    const gateway = createLiveCartGateway({ readSession, writeSession });
+
+    await expect(gateway.setAbsoluteCartQuantities({
+      cartId: "cart-1",
+      items: [{ productId: "p-1", quantity: 3 }],
+      addQuantity: false,
+    })).rejects.toThrow(MissingCartBranchError);
+
+    // The tool documents branchId as required, so nothing is sent at all.
     expect(writeSession.calls).toHaveLength(0);
   });
 });

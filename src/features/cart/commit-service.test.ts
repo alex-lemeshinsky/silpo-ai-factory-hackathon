@@ -21,6 +21,8 @@ import type {
   VerifiedCart,
 } from "@/features/shared/contracts";
 import type { SilpoGatewayHandle } from "@/features/silpo/gateway";
+import { MissingCartBranchError } from "@/features/silpo/live/cart";
+import { McpCallError } from "@/features/silpo/live/session";
 
 const USER = "00000000-0000-4000-8000-000000000001";
 const DRAFT_ID = "00000000-0000-4000-8000-000000000016";
@@ -361,7 +363,7 @@ describe("commitApprovedDraft", () => {
     });
   });
 
-  it("T16-07b still reports pre-write warnings on a retry, without recomputing targets", async () => {
+  it("T16-07b reports price news on a retry but never a re-derived cap", async () => {
     const drafts = createInMemoryDraftRepository();
     await setupApprovedDraft(drafts, confirmingDraft, KEY);
     const commits = createInMemoryCartCommitRepository();
@@ -373,9 +375,12 @@ describe("commitApprovedDraft", () => {
       confirmationTimestamp: new Date(),
     });
 
+    // The first write landed, so the cart already holds the persisted target.
+    // Re-deriving 3 + 2 against stock 4 would invent a cap that was never true
+    // of the target actually being written.
     const { gateway, handle } = makeGateway({
       findProducts: vi.fn(async (_c, queries: string[]) =>
-        queries.map((q) => ({ query: q, products: [productFor(q, { stock: 2 })] })),
+        queries.map((q) => ({ query: q, products: [productFor(q, { stock: 4, price: 19.9 })] })),
       ),
       readCart: vi.fn().mockResolvedValue(cartAfterWrite()),
     });
@@ -386,8 +391,88 @@ describe("commitApprovedDraft", () => {
     expect(gateway.setAbsoluteCartQuantities).toHaveBeenCalledWith(expect.objectContaining({
       items: [{ productId: "p-1", quantity: 3 }],
     }));
-    expect(result.value.validations.map((entry) => entry.code)).toContain("stock_capped");
-    expect(result.value.status).toBe("partially_committed");
+    const codes = result.value.validations.map((entry) => entry.code);
+    expect(codes).toContain("price_changed");
+    expect(codes).not.toContain("stock_capped");
+    expect(result.value.status).toBe("verified");
+    expect(result.value.checkoutLinks).not.toBeNull();
+  });
+
+  it("T16-07c still reports a product that went unavailable on a retry", async () => {
+    const drafts = createInMemoryDraftRepository();
+    await setupApprovedDraft(drafts, confirmingDraft, KEY);
+    const commits = createInMemoryCartCommitRepository();
+    await commits.start({
+      key: KEY,
+      targetQuantities: { "p-1": 3 },
+      userId: USER,
+      draftId: DRAFT_ID,
+      confirmationTimestamp: new Date(),
+    });
+
+    const { handle } = makeGateway({
+      findProducts: vi.fn(async (_c, queries: string[]) =>
+        queries.map((q) => ({ query: q, products: [productFor(q, { available: false })] })),
+      ),
+    });
+
+    const result = await runCommit({ drafts, commits, handle });
+
+    if (!result.ok) throw new Error("expected success");
+    expect(result.value.validations.map((entry) => entry.code)).toContain("unavailable_product");
+  });
+
+  it("T16-07d reports an expired token as unauthorized, not as a retryable write", async () => {
+    const drafts = createInMemoryDraftRepository();
+    await setupApprovedDraft(drafts, confirmingDraft, KEY);
+
+    const { handle } = makeGateway({
+      setAbsoluteCartQuantities: vi.fn(async () => {
+        throw new McpCallError("silpo_add_or_update_cart_products", 401, null);
+      }),
+    });
+
+    const result = await runCommit({ drafts, commits: createInMemoryCartCommitRepository(), handle });
+
+    expect(result).toEqual({
+      ok: false,
+      error: {
+        code: "unauthorized",
+        message: "Не вдалося підтвердити вхід. Увійдіть у «Сільпо» ще раз.",
+        correlationId: "c1",
+      },
+    });
+  });
+
+  it("T16-07e reports an expired token on a read as unauthorized too", async () => {
+    const drafts = createInMemoryDraftRepository();
+    await setupApprovedDraft(drafts, confirmingDraft, KEY);
+
+    const { handle } = makeGateway({
+      readCart: vi.fn(async () => {
+        throw new McpCallError("silpo_get_shopping_cart_by_id", 401, null);
+      }),
+    });
+
+    const result = await runCommit({ drafts, commits: createInMemoryCartCommitRepository(), handle });
+
+    expect(result).toMatchObject({ ok: false, error: { code: "unauthorized" } });
+  });
+
+  it("T16-07f does not invite a retry for a cart that has no branch", async () => {
+    const drafts = createInMemoryDraftRepository();
+    await setupApprovedDraft(drafts, confirmingDraft, KEY);
+
+    const { handle } = makeGateway({
+      setAbsoluteCartQuantities: vi.fn(async () => {
+        throw new MissingCartBranchError(CART_ID);
+      }),
+    });
+
+    const result = await runCommit({ drafts, commits: createInMemoryCartCommitRepository(), handle });
+
+    // Not commit_uncertain: every retry would re-read the same branch-less cart.
+    expect(result).toMatchObject({ ok: false, error: { code: "unexpected" } });
   });
 
   it("T16-08 replays a terminal record without touching the cart", async () => {
@@ -412,9 +497,11 @@ describe("commitApprovedDraft", () => {
     const drafts = createInMemoryDraftRepository();
     await setupApprovedDraft(drafts, confirmingDraft, KEY);
 
+    // Cart holds 1, two more approved, stock 2: the target is capped to 2,
+    // which still adds one unit.
     const { gateway, handle } = makeGateway({
       findProducts: vi.fn(async (_c, queries: string[]) =>
-        queries.map((q) => ({ query: q, products: [productFor(q, { stock: 1 })] })),
+        queries.map((q) => ({ query: q, products: [productFor(q, { stock: 2 })] })),
       ),
       readCart: vi.fn().mockResolvedValue(cartAfterWrite({
         items: [{ productId: "p-1", quantity: 1, unitPrice: 24.9, available: true }],
@@ -429,10 +516,97 @@ describe("commitApprovedDraft", () => {
 
     if (!result.ok) throw new Error("expected success");
     expect(gateway.setAbsoluteCartQuantities).toHaveBeenCalledWith(expect.objectContaining({
-      items: [{ productId: "p-1", quantity: 1 }],
+      items: [{ productId: "p-1", quantity: 2 }],
     }));
     expect(result.value.status).toBe("partially_committed");
     expect(result.value.checkoutLinks).toBeNull();
+  });
+
+  it("T16-09b never writes a line down below what the cart already holds", async () => {
+    const drafts = createInMemoryDraftRepository();
+    const twoItemDraft: Draft = {
+      ...confirmingDraft,
+      items: [draftItem(), draftItem({ productId: "p-2", name: "Молоко", externalProductId: 202 })],
+      total: 99.6,
+    };
+    await setupApprovedDraft(drafts, twoItemDraft, KEY);
+
+    // The user already put 5 of p-1 in the cart by hand and stock has since
+    // fallen to 3. Nothing can be added, and the existing line must survive.
+    const { gateway, handle } = makeGateway({
+      findProducts: vi.fn(async () => [{
+        query: "будь-що",
+        products: [
+          productFor("Вода негазована 1.5 л", { stock: 3 }),
+          productFor("Молоко", { productId: "p-2", externalProductId: 202, stock: 10 }),
+        ],
+      }]),
+      readCart: vi.fn().mockResolvedValue(cartAfterWrite({
+        items: [
+          { productId: "p-1", quantity: 5, unitPrice: 24.9, available: true },
+          { productId: "p-2", quantity: 2, unitPrice: 24.9, available: true },
+        ],
+        total: 174.3,
+      })),
+    });
+
+    const result = await runCommit({ drafts, commits: createInMemoryCartCommitRepository(), handle });
+
+    if (!result.ok) throw new Error("expected success");
+    const written = gateway.setAbsoluteCartQuantities as ReturnType<typeof vi.fn>;
+    expect(written.mock.calls[0][0].items).toEqual([{ productId: "p-2", quantity: 4 }]);
+    expect(result.value.validations.map((entry) => entry.code)).toContain("stock_capped");
+  });
+
+  it("T16-09c matches refreshed products by ID even when the echoed query differs", async () => {
+    const drafts = createInMemoryDraftRepository();
+    await setupApprovedDraft(drafts, confirmingDraft, KEY);
+
+    // Silpo echoes a normalized term rather than the submitted name.
+    const { gateway, handle } = makeGateway({
+      findProducts: vi.fn(async () => [{
+        query: "вода негазована 1,5 л",
+        products: [productFor("Вода негазована 1.5 л")],
+      }]),
+      readCart: vi.fn()
+        .mockResolvedValueOnce(cartAfterWrite({ items: [], total: 0 }))
+        .mockResolvedValueOnce(cartAfterWrite({
+          items: [{ productId: "p-1", quantity: 2, unitPrice: 24.9, available: true }],
+          total: 49.8,
+        })),
+    });
+
+    const result = await runCommit({ drafts, commits: createInMemoryCartCommitRepository(), handle });
+
+    if (!result.ok) throw new Error("expected success");
+    expect(gateway.setAbsoluteCartQuantities).toHaveBeenCalledWith(expect.objectContaining({
+      items: [{ productId: "p-1", quantity: 2 }],
+    }));
+    expect(result.value.status).toBe("verified");
+  });
+
+  it("T16-09d keeps checkout open when only the price moved", async () => {
+    const drafts = createInMemoryDraftRepository();
+    await setupApprovedDraft(drafts, confirmingDraft, KEY);
+
+    const { handle } = makeGateway({
+      findProducts: vi.fn(async (_c, queries: string[]) =>
+        queries.map((q) => ({ query: q, products: [productFor(q, { price: 19.9 })] })),
+      ),
+      readCart: vi.fn()
+        .mockResolvedValueOnce(cartAfterWrite({ items: [], total: 0 }))
+        .mockResolvedValueOnce(cartAfterWrite({
+          items: [{ productId: "p-1", quantity: 2, unitPrice: 19.9, available: true }],
+          total: 39.8,
+        })),
+    });
+
+    const result = await runCommit({ drafts, commits: createInMemoryCartCommitRepository(), handle });
+
+    if (!result.ok) throw new Error("expected success");
+    expect(result.value.validations.map((entry) => entry.code)).toContain("price_changed");
+    expect(result.value.status).toBe("verified");
+    expect(result.value.checkoutLinks).not.toBeNull();
   });
 
   it("T16-10 never writes a product it did not resolve by ID", async () => {

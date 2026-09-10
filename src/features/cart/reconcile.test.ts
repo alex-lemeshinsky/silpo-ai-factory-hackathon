@@ -80,6 +80,17 @@ describe("reconcileCommit", () => {
     expect(result.checkoutLinks).toBeNull();
   });
 
+  it("stays verified when the only adjustment is a price change", () => {
+    const result = reconcileCommit({
+      targets: { "p-1": 3 },
+      adjustments: [{ productId: "p-1", code: "price_changed", message: "Ціна змінилася після створення чернетки." }],
+      readback: readback(),
+    });
+    expect(result.status).toBe("verified");
+    expect(result.checkoutLinks).toEqual(links);
+    expect(result.validations.map((entry) => entry.code)).toContain("price_changed");
+  });
+
   it("appends each adjustment as a warning carrying its product ID", () => {
     const result = reconcileCommit({
       targets: { "p-1": 3 },

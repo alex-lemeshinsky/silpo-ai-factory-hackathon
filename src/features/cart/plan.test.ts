@@ -137,6 +137,37 @@ describe("planCommit", () => {
     ]);
   });
 
+  it("never targets less than the cart already holds", () => {
+    // The user put 5 in the cart by hand; stock has since fallen to 3.
+    const plan = planCommit({
+      approvedItems: [item({ quantity: 2 })],
+      currentQuantities: { "p-1": 5 },
+      refreshed: { "p-1": product({ stock: 3 }) },
+    });
+    expect(plan.targets).toEqual({});
+    expect(plan.adjustments).toEqual([
+      { productId: "p-1", code: "stock_capped", message: "Доступно менше, ніж потрібно: кількість зменшено." },
+    ]);
+  });
+
+  it("leaves a line alone when the cap lands exactly on the current quantity", () => {
+    const plan = planCommit({
+      approvedItems: [item({ quantity: 2 })],
+      currentQuantities: { "p-1": 3 },
+      refreshed: { "p-1": product({ stock: 3 }) },
+    });
+    expect(plan.targets).toEqual({});
+  });
+
+  it("still adds what it can when the cap stays above the current quantity", () => {
+    const plan = planCommit({
+      approvedItems: [item({ quantity: 2 })],
+      currentQuantities: { "p-1": 3 },
+      refreshed: { "p-1": product({ stock: 4 }) },
+    });
+    expect(plan.targets).toEqual({ "p-1": 4 });
+  });
+
   it("warns about a price change without changing the target", () => {
     const plan = planCommit({
       approvedItems: [item({ quantity: 2, price: 24.9 })],

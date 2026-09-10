@@ -1,6 +1,6 @@
 # Task 16 Idempotent Live Cart Commit and Verification Design
 
-Status: approved design for implementation planning on 2026-09-09
+Status: approved design, implemented and revised after code review on 2026-09-10
 
 ## 1. Scope and authority
 
@@ -56,13 +56,14 @@ One product rule is unreachable because of the same gap. The product specificati
 | Write authority | A cart write happens only after the service has read a persisted approval whose idempotency key equals the submitted key. No other precondition substitutes for it. |
 | Target arithmetic | The absolute target for a product is its current cart quantity plus the approved quantity, computed exactly once and persisted before the write. |
 | Retry safety | A retry reuses the persisted targets verbatim and never recomputes them from a cart that the first attempt may already have changed. With `addQuantity=false`, repeating the same absolute quantities is a no-op. |
-| Refresh on retry | The catalog refresh runs on every attempt but is privileged only on the first, where it feeds the target computation. On a retry it contributes validations alone. Without this a retry would report `verified` where the first attempt reported `partially_committed`, because pre-write warnings are not persisted. |
-| Product refresh key | `DraftItem` carries no slug, and every other catalog port is slug-keyed. The refresh is one `findProducts` batch over item names, matched strictly by `productId`. A name that returns no matching `productId` is unresolvable, never a fuzzy match. |
+| Refresh on retry | The catalog refresh runs on every attempt but is privileged only on the first, where it feeds the target computation. On a retry it contributes only the validations that do not depend on the cart's current quantity — availability and price. A re-derived cap or step alignment is discarded, because the retry is not recomputing the target it writes and would otherwise invent a warning that was never true of it. |
+| Product refresh key | `DraftItem` carries no slug, and every other catalog port is slug-keyed. The refresh is one `findProducts` batch over item names, matched strictly by `productId` across every returned product. The match never joins on `ProductSearchResult.query`, which is the term the server echoes back: joining on that text would make the whole commit depend on Silpo not normalizing it. A name that returns no matching `productId` is unresolvable, never a fuzzy match. |
 | Outcome authority | The service derives the terminal status from persisted targets, pre-write adjustments, and readback validations. It never re-emits the gateway's own status verbatim, so live and demo produce identical outcomes from identical facts. |
 | Pure arithmetic | Target planning and outcome reconciliation are pure functions in their own modules, unit-tested without gateway fakes. |
 | Severity mapping | Silpo severities map `warning` to warning and everything else, including unknown or missing values, to error. An unrecognized severity never silently becomes non-blocking. |
-| Adjustment taxonomy | Stock cap, step alignment, price drift, and line exclusion are warnings that forbid `verified` but do not block the write. Only error validations block. |
+| Adjustment taxonomy | Stock cap, step alignment, price drift, and line exclusion are warnings that never block the write; only error validations block. Of these, only the three that changed a quantity keep a commit out of `verified`. A price change is reported and does not hide checkout: the approval was for a product and a quantity, the readback carries the real total, and a price that merely fell must not strand a correct cart. |
 | Service rows | Targets contain only approved product IDs. A bag, delivery fee, or acceleration row already in the cart is never written and never has its quantity modified; it remains visible in the readback. |
+| Never write downwards | A target is never below the product's current cart quantity. When capping or flooring lands at or below it there is nothing to add, so the line is dropped from the targets and the existing quantity is left untouched. The approval authorizes adding, never removing, and a stock drop must not delete units the user put in the cart themselves. |
 | Slot | A valid slot is mandatory before every write attempt, including retries. `needs_slot` returns available slots and writes nothing. |
 | Error channel | The service returns `Result<VerifiedCart, CartCommitFailure>` rather than throwing, matching the approval service and the OAuth service. |
 | Draft terminal state | A narrow repository method updates only `drafts.status`. It does not bump the version and does not touch `draft_items`, so Task 15's removal tombstones survive. |
@@ -128,6 +129,7 @@ Per approved item, in order:
 - a desired quantity above the refreshed stock is capped and reported as `stock_capped`;
 - a quantity that is not a whole multiple of the refreshed step is floored to the nearest multiple and reported as `step_adjusted`;
 - a quantity that falls below one step after capping or flooring becomes an exclusion, reported as `unavailable_product`;
+- a quantity that lands at or below the product's current cart quantity is dropped from the targets, keeping the adjustments that explain why, because nothing can be added and the existing line must survive untouched;
 - a refreshed `price` or `specialPrice` that differs from the draft snapshot by more than `0.01` is reported as `price_changed` and does not change the target.
 
 Step comparison uses the same `1e-9` relative tolerance as the shared contracts, so floating-point representation never manufactures a `step_adjusted` warning.
@@ -151,7 +153,7 @@ Rules, evaluated in order:
 - validations are the readback's validations plus one warning per adjustment, each carrying its `productId`;
 - an empty target map yields `blocked` with `checkoutLinks: null`, because nothing from this draft can reach a checkout;
 - any error validation yields `blocked` with `checkoutLinks: null`;
-- otherwise any adjustment, any target whose product is missing from the readback, and any target whose readback quantity is below the target yields `partially_committed` with `checkoutLinks: null`;
+- otherwise any adjustment that changed a quantity (`unavailable_product`, `stock_capped`, `step_adjusted`), any target whose product is missing from the readback, and any target whose readback quantity is below the target yields `partially_committed` with `checkoutLinks: null`. A `price_changed` warning alone does not;
 - otherwise the result is `verified` and the readback's checkout links are returned unchanged.
 
 The reconciler never recomputes the cart total. The readback's total is the server's own arithmetic and is reported as received.
@@ -172,6 +174,7 @@ export type CartCommitFailureCode =
   | "not_found"
   | "approval_required"
   | "needs_slot"
+  | "unauthorized"
   | "commit_uncertain"
   | "unexpected";
 
@@ -195,6 +198,8 @@ export function commitApprovedDraft(
 ): Promise<Result<VerifiedCart, CartCommitFailure>>;
 ```
 
+A gateway failure is classified before it is reported. An expired token becomes `unauthorized`, never `commit_uncertain`: the server rejected the call, so nothing was written, and inviting a retry would loop forever on credentials that only reauthorization can renew. A cart that carries no branch becomes `unexpected` for the same reason — every retry would re-read the same cart.
+
 `availableSlots` is present only on `needs_slot`. Every failure carries safe Ukrainian copy and the correlation ID; no failure carries a URL, header, token, tool argument, or stack trace.
 
 The service never constructs a `SilpoGateway` itself. `openGateway` is the seam the tests replace and the route binds to `createSilpoGateway`.
@@ -210,7 +215,7 @@ export interface LiveCartGateway {
 }
 ```
 
-`setAbsoluteCartQuantities` validates its input, reads the cart through the read session to obtain `branchId`, then calls `silpo_add_or_update_cart_products` through the write session with `cartId`, `branchId`, the product targets, and `addQuantity: false`. `companyId` is omitted because the server supplies `SILPO_DEFAULT_COMPANY_ID`. The read is required because `SetCartProductsInput` carries no branch and the tool does; it is a read-only call and therefore retryable, while the write itself has no retry path at all.
+`setAbsoluteCartQuantities` validates its input, reads the cart through the read session to obtain `branchId`, and raises `MissingCartBranchError` before writing anything when that branch is absent, since the tool documents it as required. It then calls `silpo_add_or_update_cart_products` through the write session with `cartId`, `branchId`, the product targets, and `addQuantity: false`. `companyId` is omitted because the server supplies `SILPO_DEFAULT_COMPANY_ID`. The read is required because `SetCartProductsInput` carries no branch and the tool does; it is a read-only call and therefore retryable, while the write itself has no retry path at all.
 
 The write response is validated with `AcknowledgedWriteSchema`. Proof of effect is the readback, not the acknowledgement body.
 
@@ -219,7 +224,7 @@ The write response is validated with `AcknowledgedWriteSchema`. Proof of effect 
 - each cart line to `{ productId, quantity, unitPrice, available }`, where `unitPrice` is the effective per-unit price the cart reports: its special price when one is present, otherwise its price;
 - the cart total as received;
 - each validation with the severity mapping from section 4;
-- checkout links only when no error validation is present and both URLs parse as HTTPS; otherwise `null`.
+- checkout links only when no error validation is present and both URLs parse as HTTPS; otherwise `null`. An empty URL string is normalized to `null` rather than failing the parse, because this readback runs after the write and a rejection there would hide a commit that actually succeeded.
 
 Because `VerifiedCartSchema` forbids checkout links on a non-`verified` cart, the gateway reports `blocked` when an error validation is present and `verified` otherwise. It has no knowledge of targets, so it can never report `partially_committed`; only the reconciler can.
 
@@ -265,6 +270,7 @@ Identity resolution matches the approve route exactly: in demo mode the demo coo
 | unknown or unowned draft | 404 | `not_found` |
 | missing or mismatched approval | 409 | `approval_required` |
 | no valid slot | 409 | `needs_slot` with `availableSlots` |
+| expired credentials | 401 | `unauthorized` |
 | uncertain write result | 502 | `commit_uncertain` |
 | anything else | 500 | `unexpected` |
 

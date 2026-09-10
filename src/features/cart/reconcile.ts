@@ -4,7 +4,7 @@ import {
   type VerifiedCart,
 } from "@/features/shared/contracts";
 
-import type { CommitAdjustment } from "./plan";
+import { QUANTITY_ADJUSTMENT_CODES, type CommitAdjustment } from "./plan";
 
 export interface ReconcileCommitInput {
   targets: Record<string, number>;
@@ -44,9 +44,15 @@ export function reconcileCommit(input: ReconcileCommitInput): VerifiedCart {
     return quantity === undefined || quantity + QUANTITY_TOLERANCE < input.targets[productId];
   });
 
+  // A price change is reported but never hides a checkout: the approval was
+  // for a product and a quantity, and the readback carries the real total.
+  const quantityAdjusted = input.adjustments.some(
+    (adjustment) => QUANTITY_ADJUSTMENT_CODES.has(adjustment.code),
+  );
+
   const status = hasError || targetIds.length === 0
     ? "blocked"
-    : unmet || input.adjustments.length > 0
+    : unmet || quantityAdjusted
       ? "partially_committed"
       : "verified";
 

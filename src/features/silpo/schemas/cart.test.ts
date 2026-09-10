@@ -141,6 +141,14 @@ describe("ShoppingCartSchema cart lines", () => {
     });
   });
 
+  it("normalizes an empty checkout URL to null instead of failing the readback", () => {
+    const parsed = ShoppingCartSchema.parse({
+      ...cartWithLines,
+      checkout: { webUrl: "", mobileUrl: "   " },
+    });
+    expect(parsed.checkout).toEqual({ webUrl: null, mobileUrl: null });
+  });
+
   it("rejects a mistyped line quantity rather than coercing it", () => {
     const broken = { ...cartWithLines, products: [{ productId: "p-1", quantity: "2", price: 24.9 }] };
     expect(() => ShoppingCartSchema.parse(broken)).toThrow();

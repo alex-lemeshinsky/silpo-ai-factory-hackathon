@@ -453,6 +453,7 @@ describe("approveDraftSelection service", () => {
         get: async () => editableDraftFixture,
         getApproval: async () => null,
         approveSelection: async () => ({ status: "not_found" }),
+        recordCommitOutcome: async () => "updated",
       };
 
       const result = await approveDraftSelection(baseInput, { repository: fakeRepo });
@@ -472,6 +473,7 @@ describe("approveDraftSelection service", () => {
         get: async () => editableDraftFixture,
         getApproval: async () => null,
         approveSelection: async () => ({ status: "conflict" }),
+        recordCommitOutcome: async () => "updated",
       };
 
       const result = await approveDraftSelection(baseInput, { repository: fakeRepo });
@@ -493,6 +495,7 @@ describe("approveDraftSelection service", () => {
         approveSelection: async () => {
           throw new Error("DB connection failure: raw connection reset");
         },
+        recordCommitOutcome: async () => "updated",
       };
 
       const result = await approveDraftSelection(baseInput, { repository: fakeRepo });
@@ -519,6 +522,7 @@ describe("approveDraftSelection service", () => {
           status: "already_approved",
           idempotencyKey: "00000000-0000-4000-8000-000000000099",
         }),
+        recordCommitOutcome: async () => "updated",
       };
 
       const result = await approveDraftSelection(baseInput, { repository: fakeRepo });

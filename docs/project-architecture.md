@@ -306,10 +306,14 @@ Removed rows remain decision tombstones but normal draft reads return only activ
 10. Зберегти `verified` або `blocked` result.
 11. Повернути web/mobile checkout links лише без error validations.
 
-- Каталожне оновлення виконується на кожній спробі, але лише перша визначає absolute targets. На повторі targets беруться з persisted record, а оновлення дає тільки validations.
-- Пре-write коригування (`unavailable_product`, `stock_capped`, `step_adjusted`, `price_changed`) є warning-ами: вони не блокують write, але унеможливлюють статус `verified`.
+- Каталожне оновлення виконується на кожній спробі, але лише перша визначає absolute targets. На повторі targets беруться з persisted record, а оновлення дає лише ті validations, що не залежать від поточної кількості в кошику: наявність і ціну. Повторно обчислені `stock_capped` чи `step_adjusted` відкидаються, бо повтор не переобчислює target, який записує.
+- Пре-write коригування (`unavailable_product`, `stock_capped`, `step_adjusted`, `price_changed`) є warning-ами й ніколи не блокують write. Статус `verified` унеможливлюють лише три перші, що змінили кількість; `price_changed` показується, але не ховає checkout.
+- Target ніколи не менший за поточну кількість товару в кошику. Якщо cap або вирівнювання дають значення на рівні поточної кількості чи нижче, позиція не потрапляє до targets, а наявний рядок лишається незмінним: підтвердження дозволяє додавати, а не видаляти.
+- Пошук оновлених товарів зіставляється лише за `productId` серед усіх повернених результатів, а не за `ProductSearchResult.query`: цей рядок повертає сервер, і нормалізація на його боці інакше виключила б усі позиції одразу.
 - Severity з Silpo мапиться так: `warning` — попередження, будь-яке інше або невідоме значення — помилка.
-- `silpo_add_or_update_cart_products` потребує `branchId`, якого немає в `SetCartProductsInput`, тому gateway спершу читає кошик. Це read-only виклик; сам write не має retry.
+- `silpo_add_or_update_cart_products` потребує `branchId`, якого немає в `SetCartProductsInput`, тому gateway спершу читає кошик. Це read-only виклик; сам write не має retry. Кошик без branch зупиняє операцію до запису: повтор читав би той самий кошик і не мав би шансу на успіх.
+- `401` під час читання чи запису кошика повертає `unauthorized`, а не `commit_uncertain`: сервер відхилив виклик, тож запису не сталося, і повтор із тим самим ключем ніколи не допоможе.
+- Порожній checkout-URL у readback нормалізується в `null`, а не валить парсинг: цей readback виконується вже після запису, і помилка приховала б успішний commit.
 - Чернетка, у якій жодну позицію не вдалося підтвердити, дає `blocked` без write і без commit record, оскільки `cart_commits.target_quantities` не приймає порожню мапу.
 
 Після невизначеного network result повтор використовує вже збережені absolute targets. Він не додає approved quantity до оновленого кошика вдруге.

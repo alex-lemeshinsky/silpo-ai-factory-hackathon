@@ -17,6 +17,18 @@ import {
 } from "../schemas/cart";
 import type { McpSession } from "./session";
 
+/**
+ * The cart carries no branch, which `silpo_add_or_update_cart_products`
+ * requires. Failing before the write turns an unrecoverable retry loop — every
+ * attempt re-reads the same branch-less cart — into one actionable error.
+ */
+export class MissingCartBranchError extends Error {
+  constructor(readonly cartId: string) {
+    super("cart_incomplete");
+    this.name = "MissingCartBranchError";
+  }
+}
+
 export interface LiveCartDeps {
   readSession: McpSession;
   writeSession: McpSession;
@@ -58,6 +70,9 @@ export function createLiveCartGateway(deps: LiveCartDeps): LiveCartGateway {
       // `SetCartProductsInput` carries no branch and the tool requires one.
       // This read is retryable; the write below deliberately is not.
       const cart = await readRawCart(parsed.cartId);
+      if (cart.branchId === null) {
+        throw new MissingCartBranchError(parsed.cartId);
+      }
 
       await writeSession.callTool(
         "silpo_add_or_update_cart_products",

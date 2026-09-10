@@ -10,10 +10,10 @@ import {
   type VerifiedCart,
 } from "@/features/shared/contracts";
 import type { DraftRepository } from "@/features/drafts/repository";
-import type { SilpoGatewayHandle } from "@/features/silpo/gateway";
+import { classifyGatewayError, type SilpoGatewayHandle } from "@/features/silpo/gateway";
 import { err, ok, type Result } from "@/lib/result";
 
-import { planCommit } from "./plan";
+import { BASELINE_DEPENDENT_ADJUSTMENT_CODES, planCommit, type CommitAdjustment } from "./plan";
 import { reconcileCommit } from "./reconcile";
 import type { CartCommitRepository } from "./repository";
 
@@ -28,6 +28,7 @@ export type CartCommitFailureCode =
   | "not_found"
   | "approval_required"
   | "needs_slot"
+  | "unauthorized"
   | "commit_uncertain"
   | "unexpected";
 
@@ -49,6 +50,7 @@ const FAILURE_COPY: Record<CartCommitFailureCode, string> = {
   not_found: "Чернетку не знайдено. Створіть нову.",
   approval_required: "Спочатку підтвердьте чернетку.",
   needs_slot: "Оберіть доступний час доставки.",
+  unauthorized: "Не вдалося підтвердити вхід. Увійдіть у «Сільпо» ще раз.",
   commit_uncertain: "Не вдалося підтвердити запис у кошик. Спробуйте ще раз.",
   unexpected: "Не вдалося оновити кошик. Спробуйте ще раз.",
 };
@@ -65,25 +67,51 @@ function failure(code: CartCommitFailureCode, correlationId: string) {
 
 /**
  * Matches each approved item to its refreshed catalog entry by product ID
- * only. A same-named product with a different ID is not the approved
- * product, and silently substituting one would write something the user
- * never confirmed.
+ * only. A same-named product with a different ID is not the approved product,
+ * and silently substituting one would write something the user never
+ * confirmed.
+ *
+ * The search is over every returned product rather than the results of the
+ * item's own query, because `ProductSearchResult.query` is the term the server
+ * echoes back. Joining on that text would make the whole commit depend on
+ * Silpo not normalizing it, and a trimmed or case-folded echo would exclude
+ * every line at once.
  */
 function indexRefreshed(
   items: DraftItem[],
   searches: ProductSearchResult[],
 ): Record<string, ProductCandidate> {
-  const productsByQuery = new Map(searches.map((result) => [result.query, result.products]));
+  const byProductId = new Map<string, ProductCandidate>();
+  for (const result of searches) {
+    for (const candidate of result.products) {
+      if (!byProductId.has(candidate.productId)) {
+        byProductId.set(candidate.productId, candidate);
+      }
+    }
+  }
+
   const refreshed: Record<string, ProductCandidate> = {};
   for (const item of items) {
-    const match = productsByQuery
-      .get(item.name)
-      ?.find((candidate) => candidate.productId === item.productId);
+    const match = byProductId.get(item.productId);
     if (match) {
       refreshed[item.productId] = match;
     }
   }
   return refreshed;
+}
+
+/**
+ * Keeps only the adjustments a retry is entitled to report.
+ *
+ * A retry writes the persisted targets, so it must not re-derive quantities
+ * from a cart that may already contain the first write. Availability and price
+ * are independent of that baseline and stay; a re-computed cap or step
+ * alignment would be a warning that was never true of the persisted target.
+ */
+function retryReportableAdjustments(adjustments: CommitAdjustment[]): CommitAdjustment[] {
+  return adjustments.filter(
+    (adjustment) => !BASELINE_DEPENDENT_ADJUSTMENT_CODES.has(adjustment.code),
+  );
 }
 
 const currentQuantitiesOf = (cart: VerifiedCart): Record<string, number> =>
@@ -102,7 +130,7 @@ async function recordOutcome(
   status: "verified" | "partially_committed" | "blocked",
 ): Promise<void> {
   try {
-    await deps.drafts.recordCommitOutcome?.({
+    await deps.drafts.recordCommitOutcome({
       draftId: input.draftId,
       userId: input.userId,
       status,
@@ -167,8 +195,10 @@ export async function commitApprovedDraft(
     });
 
     let targets: Record<string, number>;
+    let adjustments: CommitAdjustment[];
     if (existing) {
       targets = existing.targetQuantities;
+      adjustments = retryReportableAdjustments(plan.adjustments);
     } else if (Object.keys(plan.targets).length === 0) {
       // `cart_commits.target_quantities` rejects an empty map, so there is no
       // record to persist and nothing to write.
@@ -177,6 +207,7 @@ export async function commitApprovedDraft(
         adjustments: plan.adjustments,
         readback: before,
       });
+
       await recordOutcome(deps, input, blocked.status);
       return ok(blocked);
     } else {
@@ -188,6 +219,7 @@ export async function commitApprovedDraft(
         confirmationTimestamp: now(),
       });
       targets = started.targetQuantities;
+      adjustments = plan.adjustments;
     }
 
     try {
@@ -196,7 +228,17 @@ export async function commitApprovedDraft(
         items: toTargetItems(targets),
         addQuantity: false,
       });
-    } catch {
+    } catch (error) {
+      const kind = classifyGatewayError(error);
+      if (kind === "unauthorized") {
+        // The server rejected the call, so nothing was written. Inviting a
+        // retry here would loop forever on credentials that need renewing.
+        return failure("unauthorized", input.correlationId);
+      }
+      if (kind === "cart_incomplete") {
+        // Raised before the write. Every retry would re-read the same cart.
+        return failure("unexpected", input.correlationId);
+      }
       // Never retried here. The record stays `pending`, so the next request
       // with this key reuses the same absolute targets.
       return failure("commit_uncertain", input.correlationId);
@@ -205,7 +247,7 @@ export async function commitApprovedDraft(
     const after = await gateway.readCart(cartContext.cartId);
     const result = reconcileCommit({
       targets,
-      adjustments: plan.adjustments,
+      adjustments,
       readback: after,
     });
 
@@ -216,8 +258,11 @@ export async function commitApprovedDraft(
     await recordOutcome(deps, input, result.status);
 
     return ok(result);
-  } catch {
-    return failure("unexpected", input.correlationId);
+  } catch (error) {
+    // A read that fails on an expired token must say so too, or the user is
+    // told to retry something only reauthorization can fix.
+    const code = classifyGatewayError(error) === "unauthorized" ? "unauthorized" : "unexpected";
+    return failure(code, input.correlationId);
   } finally {
     // A failure to close never masks the commit's own outcome.
     await handle?.close().catch(() => {});
