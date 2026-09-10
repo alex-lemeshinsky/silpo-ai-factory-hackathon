@@ -105,7 +105,7 @@ export function createLogger(options: {
 Four independent mechanisms enforce redaction. Each one alone is sufficient for the specimen test; together they leave no field through which personal data can reach either destination.
 
 1. **Unknown keys are stripped.** The parse uses Zod's default strip behavior. `authorization`, `phone`, `address`, `email`, `barcode`, `profileId`, raw prompts, and raw MCP payloads have no field to land in. Nothing is rejected: a caller passing extra keys still produces a trace, minus those keys.
-2. **Surviving fields are constrained.** `correlationId` is a UUID; `mode` and `status` are enums; `toolName` must match `/^[a-z][a-z0-9_]{0,63}$/i`; `predictionVersion` must match `/^[a-z0-9][a-z0-9._-]{0,31}$/i` or be `null`; `durationMs` is an integer in `[0, 600000]`; `retryCount` is an integer in `[0, 10]`. No field admits free text.
+2. **Surviving fields are constrained.** `correlationId` must match `/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/`, which every `crypto.randomUUID()` satisfies without forcing every caller and test fixture to mint one; `mode` and `status` are enums; `toolName` must match `/^[a-z][a-z0-9_]{0,63}$/i`; `predictionVersion` must match `/^[a-z0-9][a-z0-9._-]{0,31}$/i` or be `null`; `durationMs` is an integer in `[0, 600000]`; `retryCount` is an integer in `[0, 10]`. No field admits free text.
 
 `mode` reuses `DataModeSchema` from `src/features/shared/contracts.ts` rather than declaring a parallel enum. That module imports nothing but `zod`, so the import creates no cycle and no runtime coupling beyond the schema itself.
 3. **`metadata` admits no strings.** Values are `number | boolean | null`; keys match `/^[a-zA-Z][a-zA-Z0-9_]{0,39}$/`. Counts, versions expressed as numbers, and flags are representable; text is not.
@@ -291,7 +291,8 @@ Modified:
 | Every `SilpoGateway` method emits a trace, enumerated mechanically | `src/features/diagnostics/traced-gateway.test.ts` |
 | A rejecting method emits `status: "error"` and rethrows the original error instance | `src/features/diagnostics/traced-gateway.test.ts` |
 | A failing logger never breaks the underlying gateway call | `src/features/diagnostics/traced-gateway.test.ts` |
-| Decision totals, landed-replacement rule, pre-migration null price | `src/features/diagnostics/decision-repository.test.ts` |
+| Decision repository contract and the empty total | `src/features/diagnostics/decision-repository.test.ts` |
+| Landed-replacement rule and the pre-migration null price | `tests/integration/diagnostics-postgres.test.ts` — an in-memory fake of a two-table join would prove only that the fake matches itself |
 | Backtest and product-decision metrics are exposed in demo mode | `src/features/diagnostics/service.test.ts` — the task's specimen assertion |
 | Absent denominators yield `null`, distinct from `0` | `src/features/diagnostics/service.test.ts` |
 | Savings arithmetic, including a negative net | `src/features/diagnostics/service.test.ts` |
