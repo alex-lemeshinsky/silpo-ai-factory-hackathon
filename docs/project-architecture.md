@@ -416,9 +416,11 @@ Read-only MCP calls після `429` повторюються не більше 
 
 Traces емітує декоратор `withTracedGateway`, застосований у draft- і commit-сервісах одразу після відкриття gateway. Один запис на кожен виклик `SilpoGateway` в обох режимах, включно з catalog-викликами всередині `resolveProducts`. Оригінальний об'єкт помилки прокидається без змін, бо сервіси класифікують збої через `instanceof`.
 
+Декоратор не чекає на запис trace, тож повільний insert не затримує виклик Silpo. Натомість сервіси в `finally` дочікуються всіх розпочатих traces (`createSettlingLogger`) перед run-level trace: на Vercel insert, незавершений на момент відповіді, може бути втрачено. Commit trace, записаний до завантаження чернетки, маркується режимом запиту; далі авторитетний режим самої чернетки.
+
 `retryCount` — це кількість спроб на рівні сервісу: `0` для першого запуску, `1` для повтору commit із тим самим idempotency key. Внутрішні MCP-повтори з `withBoundedRetry` не видимі на рівні gateway і в MVP не публікуються.
 
-У demo mode користувач може відкрити панель «Як працює прогноз» із backtest summary, product-decision метриками та рядками `tool / duration / status`. Raw inputs, outputs, correlation ID, metadata та user identifiers не відображаються. Traces у панелі не скоуповані на користувача: `tool_traces` навмисно не має колонки користувача, і жодне поле санітизованого рядка не відрізняє відвідувачів.
+У demo mode користувач може відкрити панель «Як працює прогноз» із backtest summary, калібруванням впевненості за двома confidence buckets (очікувана проти фактичної частки влучань), product-decision метриками та рядками `tool / duration / status`. Невдале завантаження повторюється при наступному відкритті панелі. Raw inputs, outputs, correlation ID, metadata та user identifiers не відображаються. Traces у панелі не скоуповані на користувача: `tool_traces` навмисно не має колонки користувача, і жодне поле санітизованого рядка не відрізняє відвідувачів.
 
 ## 12. Performance budgets
 

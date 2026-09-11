@@ -2,6 +2,8 @@ import { ZodError } from "zod";
 
 import type { DraftGeneration } from "@/features/agent/draft-agent";
 import type { DraftAgentInput, ProposalViolationCode } from "@/features/agent/draft-output";
+import { withTracedGateway } from "@/features/diagnostics/traced-gateway";
+import { PREDICTION_ALGORITHM_VERSION } from "@/features/prediction/features";
 import { inferNeeds } from "@/features/prediction/score";
 import { resolveProducts } from "@/features/products/resolve-products";
 import { normalizePurchases } from "@/features/purchases/normalize";
@@ -21,11 +23,9 @@ import {
 } from "@/features/silpo/live/cart-context";
 import { McpCallError, UnadvertisedToolError } from "@/features/silpo/live/session";
 import { InvalidExternalDataError } from "@/features/silpo/schemas/common";
+import { createNoopLogger, createSettlingLogger, type Logger } from "@/lib/logger";
 import { err, ok, type AppError, type AppErrorCode, type Result } from "@/lib/result";
 
-import { withTracedGateway } from "@/features/diagnostics/traced-gateway";
-import { PREDICTION_ALGORITHM_VERSION } from "@/features/prediction/features";
-import { createNoopLogger, type Logger } from "@/lib/logger";
 import { assembleDraft } from "./assemble";
 import type { DraftRepository } from "./repository";
 
@@ -184,7 +184,7 @@ export async function createDraftForUser(
   const runStartedAt = now();
   const { correlationId } = input;
 
-  const logger = deps.logger ?? createNoopLogger();
+  const logger = createSettlingLogger(deps.logger ?? createNoopLogger());
   // Wall-clock, not `deps.now`: tests pin the domain clock to a constant, and
   // a run duration measured against it would always be zero.
   const startedAtMs = Date.now();
@@ -258,6 +258,8 @@ export async function createDraftForUser(
   } finally {
     // A failure to close never masks the run's own outcome.
     await handle?.close().catch(() => {});
+    // Per-call traces finish before the response; see `createSettlingLogger`.
+    await logger.settle();
     // Nor does a failure to trace: `toolCall` cannot reject.
     try {
       await logger.toolCall({

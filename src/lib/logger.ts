@@ -121,3 +121,38 @@ export function createLogger(options: {
 export function createNoopLogger(): Logger {
   return { async toolCall(): Promise<void> {} };
 }
+
+export interface SettlingLogger extends Logger {
+  /** Resolves once every trace started so far has finished. Never rejects. */
+  settle(): Promise<void>;
+}
+
+/**
+ * A request-scoped logger whose started traces can be awaited together.
+ *
+ * The gateway decorator never awaits a trace, so a slow insert cannot delay
+ * a Silpo call. On a serverless host, though, work still in flight when the
+ * response is sent may be frozen and lost. The services therefore settle in
+ * their `finally` block: no call is delayed, and every trace a request
+ * started has finished before it responds.
+ */
+export function createSettlingLogger(logger: Logger): SettlingLogger {
+  const pending: Promise<void>[] = [];
+  return {
+    toolCall(input: unknown): Promise<void> {
+      let call: Promise<void>;
+      try {
+        call = Promise.resolve(logger.toolCall(input)).catch(() => {});
+      } catch {
+        // A hand-written logger may throw synchronously; see `createLogger`.
+        call = Promise.resolve();
+      }
+      pending.push(call);
+      return call;
+    },
+    async settle(): Promise<void> {
+      // No entry can reject: each one carries its own `catch` above.
+      await Promise.all(pending);
+    },
+  };
+}

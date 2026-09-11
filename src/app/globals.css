@@ -152,10 +152,10 @@ main.autopilot-main {
 .autopilot-diagnostics-metric dt { color: var(--autopilot-muted); font-size: var(--autopilot-font-label); }
 .autopilot-diagnostics-metric dd { margin: 0; font-size: var(--autopilot-font-small); font-variant-numeric: tabular-nums; }
 
-.autopilot-diagnostics-traces { width: 100%; border-collapse: collapse; font-size: var(--autopilot-font-small); }
-.autopilot-diagnostics-traces caption { text-align: left; color: var(--autopilot-muted); font-size: var(--autopilot-font-label); }
-.autopilot-diagnostics-traces th { text-align: left; }
-.autopilot-diagnostics-traces td, .autopilot-diagnostics-traces th { padding: var(--autopilot-space-2) 0; border-bottom: 1px solid var(--autopilot-border); }
+.autopilot-diagnostics-table { width: 100%; border-collapse: collapse; font-size: var(--autopilot-font-small); }
+.autopilot-diagnostics-table caption { text-align: left; color: var(--autopilot-muted); font-size: var(--autopilot-font-label); }
+.autopilot-diagnostics-table th { text-align: left; }
+.autopilot-diagnostics-table td, .autopilot-diagnostics-table th { padding: var(--autopilot-space-2) 0; border-bottom: 1px solid var(--autopilot-border); }
 
 .autopilot-status {
   padding: var(--autopilot-space-4);

@@ -397,6 +397,36 @@ describe("createDraftForUser tracing", () => {
     expect(runTraces[0].status).toBe("error");
   });
 
+  it("A17-68 does not respond until every per-call trace has finished", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const finished: string[] = [];
+    const logger: Logger = {
+      async toolCall(input) {
+        const { toolName } = input as { toolName: string };
+        if (toolName !== "draft_run") await gate;
+        finished.push(toolName);
+      },
+    };
+    const { deps, closed } = makeDeps({ logger });
+
+    let responded = false;
+    const run = createDraftForUser(RUN, deps).then((result) => {
+      responded = true;
+      return result;
+    });
+    await vi.waitFor(() => expect(closed.count).toBe(1));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    // The gateway is closed and the run would respond now, but the per-call
+    // trace inserts it started are still in flight.
+    expect(responded).toBe(false);
+
+    release();
+    await expect(run).resolves.toMatchObject({ ok: true });
+    expect(finished).toContain("listTools");
+    expect(finished[finished.length - 1]).toBe("draft_run");
+  });
+
   it("A17-27 never lets a logger fault fail the run", async () => {
     const { deps } = makeDeps({
       logger: { toolCall: async () => { throw new Error("logger down"); } },

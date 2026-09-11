@@ -7,12 +7,17 @@ import {
   type TimeSlot,
   type VerifiedCart,
 } from "@/features/shared/contracts";
-import type { DraftRepository } from "@/features/drafts/repository";
 import { withTracedGateway } from "@/features/diagnostics/traced-gateway";
+import type { DraftRepository } from "@/features/drafts/repository";
 import type { SilpoGatewayHandle } from "@/features/silpo/gateway";
 import { MissingCartBranchError } from "@/features/silpo/live/cart";
 import { McpCallError } from "@/features/silpo/live/session";
-import { createNoopLogger, type Logger, type TraceStatus } from "@/lib/logger";
+import {
+  createNoopLogger,
+  createSettlingLogger,
+  type Logger,
+  type TraceStatus,
+} from "@/lib/logger";
 import { err, ok, type Result } from "@/lib/result";
 
 import { BASELINE_DEPENDENT_ADJUSTMENT_CODES, planCommit, type CommitAdjustment } from "./plan";
@@ -29,6 +34,12 @@ export interface CommitApprovedDraftInput {
   userId: string;
   idempotencyKey: string;
   correlationId: string;
+  /**
+   * The request's data mode. It labels only a trace written before the draft
+   * has loaded; from then on the draft's own mode is authoritative. Optional
+   * so every existing caller constructs input unchanged.
+   */
+  mode?: DataMode;
 }
 
 export type CartCommitFailureCode =
@@ -65,7 +76,6 @@ const FAILURE_COPY: Record<CartCommitFailureCode, string> = {
   commit_uncertain: "Не вдалося підтвердити запис у кошик. Спробуйте ще раз.",
   unexpected: "Не вдалося оновити кошик. Спробуйте ще раз.",
 };
-
 
 function failure(code: CartCommitFailureCode, correlationId: string) {
   return err<CartCommitFailure>({ code, message: FAILURE_COPY[code], correlationId });
@@ -188,10 +198,10 @@ export async function commitApprovedDraft(
   deps: CommitApprovedDraftDeps,
 ): Promise<Result<VerifiedCart, CartCommitFailure>> {
   const now = deps.now ?? (() => new Date());
-  const logger = deps.logger ?? createNoopLogger();
+  const logger = createSettlingLogger(deps.logger ?? createNoopLogger());
   const startedAtMs = Date.now();
   let traceStatus: TraceStatus = "error";
-  let traceMode: DataMode = "demo";
+  let traceMode: DataMode = input.mode ?? "demo";
   let itemCount = 0;
   let attempt = 0;
   let handle: SilpoGatewayHandle | undefined;
@@ -327,6 +337,8 @@ export async function commitApprovedDraft(
   } finally {
     // A failure to close never masks the commit's own outcome.
     await handle?.close().catch(() => {});
+    // Per-call traces finish before the response; see `createSettlingLogger`.
+    await logger.settle();
     try {
       await logger.toolCall({
         correlationId: input.correlationId,

@@ -1272,6 +1272,8 @@ git commit -m "feat: expose sanitized demo diagnostics"
 - Розрахунок економії (`acceptedReplacementSavings`) сліпий до замін, підтверджених до міграції 0005 (вони враховуються у replacement rate, але мають `null` у ціні);
 - Для видалених товарів історія цін не зберігається (лише заміни зберігають попередню ціну для розрахунку економії).
 
+Ревʼю 2026-09-11 знайшло сім дефектів. Найсерйозніший: `0005_diagnostics_trace_fields.sql` не було зареєстровано в `drizzle/meta/_journal.json`, тож drizzle migrator його не застосовував, а кожен запит до `draft_items` падав на відсутній колонці `replaced_from_price`. Postgres gates цього не бачили, бо застосовують файли за списком каталогу. Виправлено: журнал і snapshot згенеровано через `drizzle-kit generate`, а тест A17-65 вимагає запису в журналі та snapshot для кожного SQL-файлу. Також: панель показує обидва confidence buckets і повторює завантаження після збою; `build` повернуто до `next build` без необґрунтованого `--webpack`; commit trace, записаний до завантаження чернетки, отримує режим запиту; сервіси дочікуються per-call traces перед відповіддю (`createSettlingLogger`), щоб на Vercel insert не губився.
+
 ---
 
 ### Task 18: Full-story verification and release readiness

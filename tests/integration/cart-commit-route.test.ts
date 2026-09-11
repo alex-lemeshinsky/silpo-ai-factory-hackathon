@@ -331,6 +331,22 @@ describe("POST /api/cart/commit", () => {
     expect(body.error).toMatchObject({ code: "needs_slot", availableSlots: [SLOT] });
   });
 
+  it("A17-71 hands the server's data mode to the commit service for its traces", async () => {
+    const drafts = createInMemoryDraftRepository();
+    const commits = createInMemoryCartCommitRepository();
+    const { handle } = makeGateway();
+    const commit = vi.fn(async () =>
+      err<CartCommitFailure>({ code: "not_found", message: "msg", correlationId: "c1" }),
+    );
+
+    const handler = createCartCommitPostHandler(
+      makeDeps({ drafts, commits, gatewayHandle: handle }, { commit }),
+    );
+    await handler(post({ draftId: DRAFT_ID, idempotencyKey: KEY }, { [DEMO_SESSION_COOKIE]: DEMO_HANDLE }));
+
+    expect(commit).toHaveBeenCalledWith(expect.objectContaining({ mode: "demo" }), expect.anything());
+  });
+
   it("T16-25 ignores a client-supplied user ID and mode", async () => {
     const drafts = createInMemoryDraftRepository();
     const commits = createInMemoryCartCommitRepository();

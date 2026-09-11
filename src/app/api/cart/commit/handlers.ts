@@ -149,6 +149,7 @@ export function createCartCommitPostHandler(overrides: Partial<CartCommitHandler
           userId,
           idempotencyKey: parsed.data.idempotencyKey,
           correlationId,
+          mode,
         },
         {
           drafts: deps.drafts(),

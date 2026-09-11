@@ -928,6 +928,51 @@ describe("commitApprovedDraft", () => {
 });
 
 describe("commitApprovedDraft tracing", () => {
+  it("A17-69 does not respond until every per-call trace has finished", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const finished: string[] = [];
+    const logger: Logger = {
+      async toolCall(input) {
+        const { toolName } = input as { toolName: string };
+        if (toolName !== "cart_commit") await gate;
+        finished.push(toolName);
+      },
+    };
+    const scenario = await verifiedCommitScenario();
+
+    let responded = false;
+    const commit = commitApprovedDraft(scenario.input, { ...scenario.deps, logger }).then(
+      (result) => {
+        responded = true;
+        return result;
+      },
+    );
+    await vi.waitFor(() => expect(scenario.handle.close).toHaveBeenCalledTimes(1));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(responded).toBe(false);
+
+    release();
+    await expect(commit).resolves.toMatchObject({ ok: true });
+    expect(finished).toContain("setAbsoluteCartQuantities");
+    expect(finished[finished.length - 1]).toBe("cart_commit");
+  });
+
+  it("A17-70 labels a commit that fails before its draft loads with the request's mode", async () => {
+    const { logger, traces } = collectingLogger();
+    const scenario = await verifiedCommitScenario();
+
+    const result = await commitApprovedDraft(
+      { ...scenario.input, draftId: "00000000-0000-4000-8000-00000000dead", mode: "live" },
+      { ...scenario.deps, logger },
+    );
+
+    expect(result.ok).toBe(false);
+    expect(traces.filter((entry) => entry.toolName === "cart_commit")).toMatchObject([
+      { mode: "live", status: "error" },
+    ]);
+  });
+
   it("A17-28 emits one commit trace whose status follows the terminal outcome", async () => {
     const { logger, traces } = collectingLogger();
     const scenario = await verifiedCommitScenario();

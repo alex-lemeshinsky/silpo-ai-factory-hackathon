@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   createLogger,
   createNoopLogger,
+  createSettlingLogger,
   sanitizeTrace,
   type ToolTrace,
   type ToolTraceSink,
@@ -191,5 +192,46 @@ describe("createLogger", () => {
 
   it("A17-13 gives services a logger that records nothing", async () => {
     await expect(createNoopLogger().toolCall({ toolName: "readCart" })).resolves.toBeUndefined();
+  });
+});
+
+describe("createSettlingLogger", () => {
+  it("A17-66 lets the caller wait for every trace it started", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const finished: string[] = [];
+    const logger = createSettlingLogger({
+      async toolCall(input) {
+        await gate;
+        finished.push((input as { toolName: string }).toolName);
+      },
+    });
+
+    // Started and deliberately not awaited, as the gateway decorator does.
+    void logger.toolCall({ toolName: "listTools" });
+    void logger.toolCall({ toolName: "readCart" });
+    let settled = false;
+    const settling = logger.settle().then(() => { settled = true; });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(settled).toBe(false);
+
+    release();
+    await settling;
+    expect(finished).toEqual(["listTools", "readCart"]);
+  });
+
+  it("A17-67 never throws or rejects, whatever the wrapped logger does", async () => {
+    const throwing = createSettlingLogger({
+      toolCall: () => { throw new Error("synchronous fault"); },
+    });
+    const rejecting = createSettlingLogger({
+      toolCall: async () => { throw new Error("asynchronous fault"); },
+    });
+
+    await expect(throwing.toolCall({ toolName: "readCart" })).resolves.toBeUndefined();
+    await expect(rejecting.toolCall({ toolName: "readCart" })).resolves.toBeUndefined();
+    await expect(throwing.settle()).resolves.toBeUndefined();
+    await expect(rejecting.settle()).resolves.toBeUndefined();
   });
 });

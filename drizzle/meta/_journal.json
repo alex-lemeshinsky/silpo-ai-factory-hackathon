@@ -36,6 +36,13 @@
       "when": 1788772520242,
       "tag": "0004_silpo_oauth_invariants",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1789138056185,
+      "tag": "0005_diagnostics_trace_fields",
+      "breakpoints": true
     }
   ]
 }

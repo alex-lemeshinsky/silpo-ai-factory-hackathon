@@ -3,6 +3,7 @@
 import { useState } from "react";
 
 import type { DiagnosticsReport } from "@/features/diagnostics/service";
+import type { ConfidenceBucket } from "@/features/prediction/backtest";
 import type { TraceStatus } from "@/lib/logger";
 
 import { formatHryvnia } from "./format";
@@ -12,6 +13,10 @@ const STATUS_COPY: Record<TraceStatus, string> = {
   ok: "успішно",
   error: "помилка",
   blocked: "потребує уваги",
+};
+const BAND_COPY: Record<ConfidenceBucket["confidenceBand"], string> = {
+  high: "Висока впевненість",
+  medium: "Середня впевненість",
 };
 
 type PanelState =
@@ -46,12 +51,44 @@ function Metric({ label, value }: { label: string; value: string }) {
 }
 
 /**
+ * Calibration: how confident the model was in each band against how often
+ * it was right there. A band with no predictions has neither figure, and says
+ * so rather than showing a zero.
+ */
+function ConfidenceBuckets({ buckets }: { buckets: ConfidenceBucket[] | null }) {
+  if (buckets === null) return <p>{INSUFFICIENT}</p>;
+  return (
+    <table className="autopilot-diagnostics-table">
+      <caption>Очікувана й фактична частка влучань за рівнем впевненості</caption>
+      <thead>
+        <tr>
+          <th scope="col">Рівень</th>
+          <th scope="col">Прогнозів</th>
+          <th scope="col">Очікувано</th>
+          <th scope="col">Фактично</th>
+        </tr>
+      </thead>
+      <tbody>
+        {buckets.map((bucket) => (
+          <tr key={bucket.confidenceBand}>
+            <th scope="row">{BAND_COPY[bucket.confidenceBand]}</th>
+            <td>{bucket.predictionCount}</td>
+            <td>{percent(bucket.meanConfidence)}</td>
+            <td>{percent(bucket.observedFrequency)}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+/**
  * Demo-only disclosure for the jury.
  *
  * `<details>` rather than a hand-built toggle: collapsed default, keyboard
  * operation, and screen-reader semantics come from the element. The report
- * is fetched on the first open only, so a panel nobody opens costs one
- * element and no request.
+ * is fetched on the first open, and again on a later open only if that fetch
+ * failed, so a panel nobody opens costs one element and no request.
  */
 export function DemoDiagnostics() {
   const [state, setState] = useState<PanelState>({ kind: "idle" });
@@ -72,7 +109,9 @@ export function DemoDiagnostics() {
   };
 
   const onToggle = (event: React.SyntheticEvent<HTMLDetailsElement>): void => {
-    if (event.currentTarget.open && state.kind === "idle") {
+    // A failure is transient far more often than not; reopening is the
+    // natural way to ask again, and a page reload should not be the only one.
+    if (event.currentTarget.open && (state.kind === "idle" || state.kind === "failed")) {
       void load();
     }
   };
@@ -96,6 +135,11 @@ export function DemoDiagnostics() {
             </dl>
           </section>
 
+          <section aria-labelledby="autopilot-diagnostics-calibration">
+            <h3 id="autopilot-diagnostics-calibration">Калібрування впевненості</h3>
+            <ConfidenceBuckets buckets={state.report.backtest?.confidenceBuckets ?? null} />
+          </section>
+
           <section aria-labelledby="autopilot-diagnostics-decisions">
             <h3 id="autopilot-diagnostics-decisions">Рішення користувача</h3>
             <dl className="autopilot-diagnostics-metrics">
@@ -110,7 +154,7 @@ export function DemoDiagnostics() {
             {state.report.traces.length === 0 ? (
               <p>{INSUFFICIENT}</p>
             ) : (
-              <table className="autopilot-diagnostics-traces">
+              <table className="autopilot-diagnostics-table">
                 <caption>Інструмент, тривалість і статус останніх викликів</caption>
                 <thead>
                   <tr>
