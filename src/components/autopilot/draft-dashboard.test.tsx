@@ -1,5 +1,7 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import {
+  afterEach, beforeEach, describe, expect, it, vi,
+} from "vitest";
 import {
   CartContextSchema, DraftSchema, effectiveUnitPrice, ProductCandidateSchema, VerifiedCartSchema,
   type CartContext, type Draft, type DraftItem, type ProductCandidate, type VerifiedCart,
@@ -553,7 +555,11 @@ describe("DraftDashboard", () => {
       const source = await readFile(new NodeURL(name, directory), "utf8");
       expect(source, `${name} must not hard-code colour`).not.toMatch(/#[0-9a-fA-F]{3,8}\b|rgba?\(|hsla?\(/);
       expect(source, `${name} must not use inline styles`).not.toContain("style={{");
-      if (name !== "draft-dashboard.tsx" && name !== "draft-editor.tsx") {
+      if (
+        name !== "draft-dashboard.tsx" &&
+        name !== "draft-editor.tsx" &&
+        name !== "demo-diagnostics.tsx"
+      ) {
         expect(source, `${name} must stay a Server Component`).not.toContain("use client");
       }
     }
@@ -600,5 +606,36 @@ describe("DraftDashboard", () => {
     expect(screen.queryByRole("link", { name: /Оформити/ })).toBeNull();
     expect(approveDraft).toHaveBeenCalledOnce();
     expect(fetchSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("DraftDashboard diagnostics placement", () => {
+  const fetchMock = vi.fn();
+
+  beforeEach(() => {
+    fetchMock.mockClear();
+    vi.stubGlobal("fetch", fetchMock);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("A17-58 shows the diagnostics panel last in demo mode", () => {
+    renderDashboard({ phase: { kind: "pending", status: "syncing", mode: "demo" } });
+
+    const panel = screen.getByText("Як працює прогноз");
+    expect(panel).toBeInTheDocument();
+
+    // Dashboard order is fixed: diagnostics is item 7, after everything else.
+    const main = screen.getByRole("main");
+    expect(main.lastElementChild).toContainElement(panel);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("A17-59 never shows the diagnostics panel in live mode", () => {
+    renderDashboard({ phase: { kind: "pending", status: "syncing", mode: "live" } });
+
+    expect(screen.queryByText("Як працює прогноз")).not.toBeInTheDocument();
   });
 });

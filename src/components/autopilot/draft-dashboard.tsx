@@ -15,6 +15,7 @@ import {
   type EditableDraft,
 } from "./draft-editor";
 import { StatusPanel, ValidationList, type StatusTone } from "./status-panel";
+import { DemoDiagnostics } from "./demo-diagnostics";
 
 export type PendingStatus = Extract<DraftStatus, "syncing" | "generating">;
 
@@ -159,6 +160,7 @@ export function DraftDashboard({
             )}
           </>
         )}
+        {mode === "demo" && <DemoDiagnostics />}
       </main>
     </>
   );

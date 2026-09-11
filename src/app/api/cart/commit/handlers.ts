@@ -21,10 +21,12 @@ import {
   createPostgresDraftRepository,
   type DraftRepository,
 } from "@/features/drafts/repository";
+import { createPostgresToolTraceRepository } from "@/features/diagnostics/trace-repository";
 import type { DataMode } from "@/features/shared/contracts";
 import { createSilpoGateway, type SilpoGatewayHandle } from "@/features/silpo/gateway";
 import { resolveSilpoSession } from "@/features/silpo/oauth/service";
 import { getServerEnv, type ServerEnv } from "@/lib/env";
+import { createLogger, type Logger } from "@/lib/logger";
 import type { AppError, Result } from "@/lib/result";
 
 const RESPONSE_HEADERS = {
@@ -52,6 +54,7 @@ export interface CartCommitHandlerDeps {
   resolveDemoIdentity: (cookieValue: string | null) => Promise<DemoIdentity>;
   drafts: () => DraftRepository;
   commits: () => CartCommitRepository;
+  logger: () => Logger;
   openGateway: (options: { mode: DataMode; userId: string }) => Promise<SilpoGatewayHandle>;
   commit: typeof commitApprovedDraft;
 }
@@ -102,6 +105,7 @@ export function createCartCommitPostHandler(overrides: Partial<CartCommitHandler
     resolveDemoIdentity: (cookie) => ensureDemoUser(getDbClient(), cookie),
     drafts: () => createPostgresDraftRepository(getDbClient()),
     commits: () => createPostgresCartCommitRepository(getDbClient()),
+    logger: () => createLogger({ sink: createPostgresToolTraceRepository(getDbClient()) }),
     openGateway: ({ mode, userId }) =>
       createSilpoGateway({ mode, userId, publicBaseUrl: getEnv().PUBLIC_BASE_URL }),
     commit: commitApprovedDraft,
@@ -150,6 +154,7 @@ export function createCartCommitPostHandler(overrides: Partial<CartCommitHandler
           drafts: deps.drafts(),
           commits: deps.commits(),
           openGateway: () => deps.openGateway({ mode, userId }),
+          logger: deps.logger(),
         },
       );
 

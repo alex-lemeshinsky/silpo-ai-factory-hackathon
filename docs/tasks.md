@@ -1151,23 +1151,43 @@ git commit -m "feat: commit verified Silpo carts"
 ### Task 17: Demo diagnostics and sanitized MCP trace
 
 **Files:**
+- Modify: `src/db/schema.ts`
+- Modify: `src/db/schema.test.ts`
+- Create: `drizzle/0005_diagnostics_trace_fields.sql`
 - Create: `src/lib/logger.ts`
-- Create: `src/features/diagnostics/service.ts`
-- Create: `src/app/api/demo/diagnostics/route.ts`
-- Create: `src/components/autopilot/demo-diagnostics.tsx`
+- Create: `src/lib/logger.test.ts`
+- Create: `src/features/diagnostics/trace-repository.ts`
+- Create: `src/features/diagnostics/trace-repository.test.ts`
+- Create: `src/features/diagnostics/traced-gateway.ts`
+- Create: `src/features/diagnostics/traced-gateway.test.ts`
 - Modify: `src/features/drafts/service.ts`
+- Modify: `src/features/drafts/service.test.ts`
 - Modify: `src/features/cart/commit-service.ts`
+- Modify: `src/features/cart/commit-service.test.ts`
+- Modify: `src/features/cart/repository.ts`
+- Modify: `src/features/drafts/repository.ts`
+- Modify: `src/features/drafts/repository.test.ts`
+- Create: `src/features/diagnostics/decision-repository.ts`
+- Create: `src/features/diagnostics/decision-repository.test.ts`
+- Create: `src/features/diagnostics/service.ts`
+- Create: `src/features/diagnostics/service.test.ts`
+- Create: `src/app/api/demo/diagnostics/route.ts`
+- Create: `tests/integration/demo-diagnostics-route.test.ts`
+- Create: `src/components/autopilot/demo-diagnostics.tsx`
+- Create: `src/components/autopilot/demo-diagnostics.test.tsx`
 - Modify: `src/components/autopilot/draft-dashboard.tsx`
-- Test: `src/lib/logger.test.ts`
-- Test: `src/features/diagnostics/service.test.ts`
-- Test: `src/components/autopilot/demo-diagnostics.test.tsx`
-- Test: `tests/integration/demo-diagnostics-route.test.ts`
+- Modify: `src/components/autopilot/draft-dashboard.test.tsx`
+- Modify: `src/app/globals.css`
+- Modify: `vitest.config.ts`
+- Create: `tests/integration/diagnostics-postgres.test.ts`
+- Modify: `docs/project-architecture.md`
+- Modify: `docs/tasks.md`
 
 **Interfaces:**
 - Consumes: complete application.
 - Produces: sanitized persisted traces and a demo-only diagnostics panel for the jury.
 
-- [ ] **Step 1: Write failing diagnostics tests**
+- [x] **Step 1: Write failing diagnostics tests**
 
 ```ts
 it("redacts secrets and personal fields before persisting a trace", async () => {
@@ -1189,30 +1209,68 @@ it("exposes backtest and product-decision metrics in demo mode", async () => {
 });
 ```
 
-- [ ] **Step 2: Confirm failure**
+- [x] **Step 2: Confirm failure**
 
 Run: `pnpm vitest run src/lib/logger.test.ts src/features/diagnostics/service.test.ts src/components/autopilot/demo-diagnostics.test.tsx tests/integration/demo-diagnostics-route.test.ts`
 Expected: FAIL because diagnostics do not exist.
 
-- [ ] **Step 3: Add sanitized structured tracing**
+- [x] **Step 3: Add sanitized structured tracing**
 
 Log correlation ID, mode, tool name, duration, retry count, prediction version, item count, and result status to `tool_traces`. Explicitly redact authorization headers, tokens, phone, email, address, barcode, profile IDs, raw prompts, and raw MCP payloads before both persistence and console output.
 
-- [ ] **Step 4: Implement demo metrics and panel**
+- [x] **Step 4: Implement demo metrics and panel**
 
 The demo-only route combines `runRollingBacktest` with persisted draft decisions and verified commits. Return exact-SKU precision/recall, category precision/recall@3, hit rate, coverage, confidence buckets, acceptance rate, replacement rate, and accepted-replacement savings. Return `null` plus “Недостатньо спостережень” for product-decision metrics without a denominator. Return 404 in live mode.
 
 Add a collapsed “Як працює прогноз” panel to the demo dashboard. It shows the backtest summary and sanitized MCP trace rows (tool, duration, status) without raw inputs, outputs, or identifiers.
 
-- [ ] **Step 5: Verify and commit**
+- [x] **Step 5: Verify and commit**
 
 Run: `pnpm vitest run src/lib/logger.test.ts src/features/diagnostics/service.test.ts src/components/autopilot/demo-diagnostics.test.tsx tests/integration/demo-diagnostics-route.test.ts && pnpm typecheck`
 Expected: PASS.
 
 ```bash
-git add src/lib/logger.ts src/lib/logger.test.ts src/features/diagnostics src/features/drafts/service.ts src/features/cart/commit-service.ts src/app/api/demo/diagnostics src/components/autopilot/demo-diagnostics.tsx src/components/autopilot/demo-diagnostics.test.tsx src/components/autopilot/draft-dashboard.tsx tests/integration/demo-diagnostics-route.test.ts
+git add \
+  src/db/schema.ts \
+  src/db/schema.test.ts \
+  drizzle/0005_diagnostics_trace_fields.sql \
+  src/lib/logger.ts \
+  src/lib/logger.test.ts \
+  src/features/diagnostics/trace-repository.ts \
+  src/features/diagnostics/trace-repository.test.ts \
+  src/features/diagnostics/traced-gateway.ts \
+  src/features/diagnostics/traced-gateway.test.ts \
+  src/features/drafts/service.ts \
+  src/features/drafts/service.test.ts \
+  src/features/drafts/repository.ts \
+  src/features/drafts/repository.test.ts \
+  src/features/cart/commit-service.ts \
+  src/features/cart/commit-service.test.ts \
+  src/features/cart/repository.ts \
+  src/features/diagnostics/decision-repository.ts \
+  src/features/diagnostics/decision-repository.test.ts \
+  src/features/diagnostics/service.ts \
+  src/features/diagnostics/service.test.ts \
+  src/app/api/demo/diagnostics \
+  src/app/globals.css \
+  src/components/autopilot/demo-diagnostics.tsx \
+  src/components/autopilot/demo-diagnostics.test.tsx \
+  src/components/autopilot/draft-dashboard.tsx \
+  src/components/autopilot/draft-dashboard.test.tsx \
+  tests/integration/demo-diagnostics-route.test.ts \
+  tests/integration/diagnostics-postgres.test.ts \
+  vitest.config.ts \
+  docs/project-architecture.md \
+  docs/tasks.md
 git commit -m "feat: expose sanitized demo diagnostics"
 ```
+
+Виконано 2026-09-11. Специфікація: [spec](./superpowers/specs/2026-09-10-demo-diagnostics-design.md), план: [plan](./superpowers/plans/2026-09-10-demo-diagnostics.md). Реалізовано структурно санітизоване трасування інструментів (`src/lib/logger.ts`, `withTracedGateway`), репозиторії трас та рішень користувача з підтримкою in-memory та Postgres, збереження `replaced_from_price` і `prediction_version` (міграція `0005_diagnostics_trace_fields.sql`), агрегацію діагностики (`buildDiagnostics`), безпечний demo-only маршрут `GET /api/demo/diagnostics` (404 у live режимі, без створення користувача у базі), а також згорнуту панель «Як працює прогноз» у демо-дашборді з відкладеним завантаженням та безпечним відображенням відсутності даних («Недостатньо спостережень»). Перевірено focused tests, cumulative tests (vitest, lint, typecheck, build) та перевірками безпеки відсутності витоку конфіденційних полів. Перенесені обмеження зі специфікації (розділ 12):
+- Внутрішні повтори MCP не підраховуються: `withBoundedRetry` веде приватний лічильник усередині `McpSession.callTool`, тому `retryCount` фіксує лише спроби на рівні сервісу;
+- Рядки трас іменуються за методами шлюзу (`SilpoGateway`), а не назвами MCP tools, оскільки в demo mode сесія MCP відсутня;
+- Траси є глобальними для demo mode: таблиця `tool_traces` свідомо не має прив'язки до користувача для запобігання витоку ідентифікаторів відвідувачів;
+- Розрахунок економії (`acceptedReplacementSavings`) сліпий до замін, підтверджених до міграції 0005 (вони враховуються у replacement rate, але мають `null` у ціні);
+- Для видалених товарів історія цін не зберігається (лише заміни зберігають попередню ціну для розрахунку економії).
 
 ---
 

@@ -1,8 +1,6 @@
-import { z } from "zod";
-
 import {
-  VerifiedCartSchema,
   type CartContext,
+  type DataMode,
   type DraftItem,
   type ProductCandidate,
   type ProductSearchResult,
@@ -10,15 +8,21 @@ import {
   type VerifiedCart,
 } from "@/features/shared/contracts";
 import type { DraftRepository } from "@/features/drafts/repository";
+import { withTracedGateway } from "@/features/diagnostics/traced-gateway";
 import type { SilpoGatewayHandle } from "@/features/silpo/gateway";
 import { MissingCartBranchError } from "@/features/silpo/live/cart";
 import { McpCallError } from "@/features/silpo/live/session";
+import { createNoopLogger, type Logger, type TraceStatus } from "@/lib/logger";
 import { err, ok, type Result } from "@/lib/result";
 
 import { BASELINE_DEPENDENT_ADJUSTMENT_CODES, planCommit, type CommitAdjustment } from "./plan";
-import { PlannedCartCommitSchema, type CartCommitRecord } from "./repository";
+import {
+  PlannedCartCommitSchema,
+  StoredCommitResultSchema,
+  type CartCommitRecord,
+  type CartCommitRepository,
+} from "./repository";
 import { reconcileCommit } from "./reconcile";
-import type { CartCommitRepository } from "./repository";
 
 export interface CommitApprovedDraftInput {
   draftId: string;
@@ -47,6 +51,8 @@ export interface CommitApprovedDraftDeps {
   drafts: DraftRepository;
   commits: CartCommitRepository;
   openGateway: () => Promise<SilpoGatewayHandle>;
+  /** Optional so every existing caller and test constructs deps unchanged. */
+  logger?: Logger;
   now?: () => Date;
 }
 
@@ -60,11 +66,6 @@ const FAILURE_COPY: Record<CartCommitFailureCode, string> = {
   unexpected: "Не вдалося оновити кошик. Спробуйте ще раз.",
 };
 
-/** The shape `CartCommitRepository.saveResult` persists. */
-const StoredCommitResultSchema = z.object({
-  status: z.enum(["verified", "partially_committed", "blocked"]),
-  data: z.object({ cart: VerifiedCartSchema }),
-});
 
 function failure(code: CartCommitFailureCode, correlationId: string) {
   return err<CartCommitFailure>({ code, message: FAILURE_COPY[code], correlationId });
@@ -187,11 +188,18 @@ export async function commitApprovedDraft(
   deps: CommitApprovedDraftDeps,
 ): Promise<Result<VerifiedCart, CartCommitFailure>> {
   const now = deps.now ?? (() => new Date());
+  const logger = deps.logger ?? createNoopLogger();
+  const startedAtMs = Date.now();
+  let traceStatus: TraceStatus = "error";
+  let traceMode: DataMode = "demo";
+  let itemCount = 0;
+  let attempt = 0;
   let handle: SilpoGatewayHandle | undefined;
 
   try {
     const draft = await deps.drafts.get(input.draftId, input.userId);
     if (!draft) return failure("not_found", input.correlationId);
+    traceMode = draft.mode;
 
     // The approval record is the only authorization for a cart write.
     const approval = await deps.drafts.getApproval(input.draftId, input.userId);
@@ -200,14 +208,27 @@ export async function commitApprovedDraft(
     }
 
     const existing = await deps.commits.get(input.idempotencyKey);
+    // A record that already exists means this request is a retry reusing the
+    // persisted absolute targets.
+    attempt = existing ? 1 : 0;
     if (existing && existing.status !== "pending") {
       const stored = StoredCommitResultSchema.safeParse(existing.result);
       const cart = stored.success ? stored.data.data.cart : null;
-      return cart ? ok(cart) : failure("unexpected", input.correlationId);
+      if (cart) {
+        traceStatus = cart.status === "verified" ? "ok" : "blocked";
+        itemCount = cart.items.length;
+        return ok(cart);
+      }
+      return failure("unexpected", input.correlationId);
     }
 
     handle = await deps.openGateway();
-    const { gateway } = handle;
+    const gateway = withTracedGateway(handle.gateway, {
+      logger,
+      correlationId: input.correlationId,
+      mode: traceMode,
+      retryCount: attempt,
+    });
 
     const context = await gateway.loadCartContext();
     if (context.status !== "ready") {
@@ -256,6 +277,8 @@ export async function commitApprovedDraft(
       });
 
       await recordOutcome(deps, input, blocked.status);
+      traceStatus = "blocked";
+      itemCount = 0;
       return ok(blocked);
     } else {
       const started = await deps.commits.start({
@@ -292,6 +315,8 @@ export async function commitApprovedDraft(
       data: { cart: result },
     });
     await recordOutcome(deps, input, result.status);
+    traceStatus = result.status === "verified" ? "ok" : "blocked";
+    itemCount = result.items.length;
 
     return ok(result);
   } catch (error) {
@@ -302,5 +327,18 @@ export async function commitApprovedDraft(
   } finally {
     // A failure to close never masks the commit's own outcome.
     await handle?.close().catch(() => {});
+    try {
+      await logger.toolCall({
+        correlationId: input.correlationId,
+        toolName: "cart_commit",
+        mode: traceMode,
+        durationMs: Date.now() - startedAtMs,
+        retryCount: attempt,
+        status: traceStatus,
+        metadata: { itemCount, attempt },
+      });
+    } catch {
+      // Observability faults must not fail the commit.
+    }
   }
 }

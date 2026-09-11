@@ -196,6 +196,22 @@ interface MemoryDraftRow {
   }>;
 }
 
+/**
+ * The effective unit price a `replaced` decision is about to overwrite.
+ *
+ * Approval rewrites the row in place with the replacement's own price, so
+ * this is the last moment the proposed price exists. Without it the
+ * accepted-replacement savings metric has no minuend and is permanently
+ * uncomputable. `kept` and `removed` change no price and record none.
+ */
+export function replacedFromPriceFor(
+  decision: DraftItemDecision,
+  row: { price: number | null; specialPrice: number | null },
+): number | null {
+  if (decision.decision !== "replaced") return null;
+  return row.specialPrice ?? row.price;
+}
+
 export function createInMemoryDraftRepository(): DraftRepository {
   const draftsById = new Map<string, MemoryDraftRow>();
   const approvalsByDraftId = new Map<string, DraftApprovalRecord>();
@@ -606,6 +622,10 @@ export function createPostgresDraftRepository(db: DbClient): DraftRepository {
                 alternatives: decision.item.alternatives,
                 promotions: decision.item.promotions,
                 userDecision: decision.decision,
+                replacedFromPrice: replacedFromPriceFor(decision, {
+                  price: row.price,
+                  specialPrice: row.specialPrice,
+                }),
                 version: input.approvedDraft.version,
               })
               .where(eq(draftItems.id, row.id));

@@ -23,6 +23,9 @@ import { McpCallError, UnadvertisedToolError } from "@/features/silpo/live/sessi
 import { InvalidExternalDataError } from "@/features/silpo/schemas/common";
 import { err, ok, type AppError, type AppErrorCode, type Result } from "@/lib/result";
 
+import { withTracedGateway } from "@/features/diagnostics/traced-gateway";
+import { PREDICTION_ALGORITHM_VERSION } from "@/features/prediction/features";
+import { createNoopLogger, type Logger } from "@/lib/logger";
 import { assembleDraft } from "./assemble";
 import type { DraftRepository } from "./repository";
 
@@ -60,6 +63,8 @@ export interface CreateDraftDeps {
   openGateway: (options: { mode: DataMode; userId: string }) => Promise<SilpoGatewayHandle>;
   generateDraft: (input: DraftAgentInput) => Promise<DraftGeneration>;
   repository: DraftRepository;
+  /** Optional so every existing caller and test constructs deps unchanged. */
+  logger?: Logger;
   now?: () => Date;
   newDraftId?: () => string;
 }
@@ -179,10 +184,24 @@ export async function createDraftForUser(
   const runStartedAt = now();
   const { correlationId } = input;
 
+  const logger = deps.logger ?? createNoopLogger();
+  // Wall-clock, not `deps.now`: tests pin the domain clock to a constant, and
+  // a run duration measured against it would always be zero.
+  const startedAtMs = Date.now();
+  let runStatus: "ok" | "error" = "error";
+  let itemCount = 0;
+
   let handle: SilpoGatewayHandle | undefined;
   try {
     handle = await deps.openGateway({ mode: input.mode, userId: input.userId });
-    const { gateway } = handle;
+    // Applied here rather than at gateway construction so no route changes,
+    // and so every consumer is covered — including `resolveProducts`, which
+    // issues most of a run's Silpo calls.
+    const gateway = withTracedGateway(handle.gateway, {
+      logger,
+      correlationId,
+      mode: input.mode,
+    });
 
     // Mandatory first operation: never assume the available tool surface.
     const tools = await gateway.listTools();
@@ -221,6 +240,8 @@ export async function createDraftForUser(
     });
 
     const saved = await deps.repository.save(input.userId, draft);
+    runStatus = "ok";
+    itemCount = saved.items.length;
 
     return ok({
       draft: saved,
@@ -237,5 +258,20 @@ export async function createDraftForUser(
   } finally {
     // A failure to close never masks the run's own outcome.
     await handle?.close().catch(() => {});
+    // Nor does a failure to trace: `toolCall` cannot reject.
+    try {
+      await logger.toolCall({
+        correlationId,
+        toolName: "draft_run",
+        mode: input.mode,
+        durationMs: Date.now() - startedAtMs,
+        retryCount: 0,
+        predictionVersion: PREDICTION_ALGORITHM_VERSION,
+        status: runStatus,
+        metadata: { itemCount },
+      });
+    } catch {
+      // Observability faults must not fail the run.
+    }
   }
 }

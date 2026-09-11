@@ -150,6 +150,12 @@ export const draftItems = pgTable("draft_items", {
   position: integer("position"),
   alternatives: jsonb("alternatives").$type<unknown[]>(),
   promotions: jsonb("promotions").$type<Promotion[]>(),
+  /**
+   * The effective unit price of the product this row originally proposed,
+   * captured when a `replaced` decision overwrites the row. Null for every
+   * other decision and for rows approved before migration 0005.
+   */
+  replacedFromPrice: doublePrecision("replaced_from_price"),
 });
 
 // 10. cart_commits
@@ -175,6 +181,11 @@ export const toolTraces = pgTable("tool_traces", {
   durationMs: integer("duration_ms"),
   retryCount: integer("retry_count"),
   sanitizedStatus: text("sanitized_status"),
+  /**
+   * The prediction algorithm version this run used. A typed column rather
+   * than a `metadata` entry, because `metadata` admits no strings by design.
+   */
+  predictionVersion: text("prediction_version"),
   metadata: jsonb("metadata").$type<Record<string, unknown>>(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });

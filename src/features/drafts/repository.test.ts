@@ -12,6 +12,7 @@ import {
 import {
   createInMemoryDraftRepository,
   createPostgresDraftRepository,
+  replacedFromPriceFor,
   type PersistDraftApprovalInput,
 } from "./repository";
 
@@ -1097,3 +1098,36 @@ describe("recordCommitOutcome (in-memory)", () => {
     })).rejects.toThrow();
   });
 });
+
+describe("replacedFromPriceFor", () => {
+  const row = { price: 42.5, specialPrice: null };
+  const replacement = {
+    sourceProductId: "water-1",
+    expectedVersion: 1,
+    decision: "replaced" as const,
+    item: {} as never,
+  };
+
+  it("A17-31 captures the effective price the replacement overwrites", () => {
+    expect(replacedFromPriceFor(replacement, row)).toBe(42.5);
+  });
+
+  it("A17-32 prefers the special price, so both sides of the saving compare alike", () => {
+    expect(replacedFromPriceFor(replacement, { price: 42.5, specialPrice: 33 })).toBe(33);
+  });
+
+  it("A17-33 records nothing for a kept or removed decision", () => {
+    expect(replacedFromPriceFor({ ...replacement, decision: "kept" }, row)).toBeNull();
+    expect(
+      replacedFromPriceFor(
+        { sourceProductId: "water-1", expectedVersion: 1, decision: "removed", item: null },
+        row,
+      ),
+    ).toBeNull();
+  });
+
+  it("A17-34 records nothing when the stored row carries no price at all", () => {
+    expect(replacedFromPriceFor(replacement, { price: null, specialPrice: null })).toBeNull();
+  });
+});
+

@@ -11,9 +11,11 @@ import {
 } from "@/features/drafts/demo-user";
 import { createPostgresDraftRepository, type DraftRepository } from "@/features/drafts/repository";
 import { createDraftForUser, type CreateDraftDeps } from "@/features/drafts/service";
+import { createPostgresToolTraceRepository } from "@/features/diagnostics/trace-repository";
 import { createSilpoGateway } from "@/features/silpo/gateway";
 import { resolveSilpoSession } from "@/features/silpo/oauth/service";
 import { getServerEnv, type ServerEnv } from "@/lib/env";
+import { createLogger, type Logger } from "@/lib/logger";
 import type { AppError, AppErrorCode, Result } from "@/lib/result";
 
 const headers = { "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" };
@@ -47,6 +49,7 @@ export interface DraftsHandlerDeps {
   resolveSession: (handle: string | null) => Promise<Result<{ userId: string }, AppError>>;
   resolveDemoIdentity: (cookieValue: string | null) => Promise<DemoIdentity>;
   repository: () => DraftRepository;
+  logger: () => Logger;
   openGateway: CreateDraftDeps["openGateway"];
   generateDraft: CreateDraftDeps["generateDraft"];
 }
@@ -62,6 +65,7 @@ export function createDraftsPostHandler(overrides: Partial<DraftsHandlerDeps> = 
     resolveSession: (handle) => resolveSilpoSession(handle),
     resolveDemoIdentity: (cookieValue) => ensureDemoUser(getDbClient(), cookieValue),
     repository: () => createPostgresDraftRepository(getDbClient()),
+    logger: () => createLogger({ sink: createPostgresToolTraceRepository(getDbClient()) }),
     openGateway: ({ mode, userId }) =>
       createSilpoGateway({ mode, userId, publicBaseUrl: getEnv().PUBLIC_BASE_URL }),
     generateDraft: (input) => {
@@ -129,6 +133,7 @@ export function createDraftsPostHandler(overrides: Partial<DraftsHandlerDeps> = 
           openGateway: deps.openGateway,
           generateDraft: deps.generateDraft,
           repository: deps.repository(),
+          logger: deps.logger(),
         },
       );
 

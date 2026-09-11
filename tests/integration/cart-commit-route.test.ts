@@ -30,8 +30,10 @@ import type {
   TimeSlot,
   VerifiedCart,
 } from "@/features/shared/contracts";
+import { createInMemoryToolTraceRepository } from "@/features/diagnostics/trace-repository";
 import type { SilpoGatewayHandle } from "@/features/silpo/gateway";
 import type { ServerEnv } from "@/lib/env";
+import { createLogger, createNoopLogger, type Logger } from "@/lib/logger";
 import { err, ok } from "@/lib/result";
 
 function makeEnv(overrides: Partial<ServerEnv> = {}): ServerEnv {
@@ -202,6 +204,7 @@ function makeDeps(
     drafts: DraftRepository;
     commits: CartCommitRepository;
     gatewayHandle: SilpoGatewayHandle;
+    logger?: Logger;
   },
   overrides: Partial<CartCommitHandlerDeps> = {},
 ): CartCommitHandlerDeps {
@@ -215,6 +218,7 @@ function makeDeps(
     }),
     drafts: () => deps.drafts,
     commits: () => deps.commits,
+    logger: () => deps.logger ?? createNoopLogger(),
     openGateway: async () => deps.gatewayHandle,
     commit: commitApprovedDraft,
     ...overrides,
@@ -420,5 +424,26 @@ describe("POST /api/cart/commit", () => {
     expect(body).toContain("correlationId");
     expect(body).not.toMatch(/https?:\/\//);
     expect(body).not.toContain("token");
+  });
+
+  it("injects the configured logger into commit so traces are recorded", async () => {
+    const traceRepo = createInMemoryToolTraceRepository();
+    const logger = createLogger({ sink: traceRepo });
+    const drafts = createInMemoryDraftRepository();
+    await setupApprovedDraft(drafts);
+    const commits = createInMemoryCartCommitRepository();
+    const { handle } = makeGateway();
+
+    const handler = createCartCommitPostHandler(
+      makeDeps({ drafts, commits, gatewayHandle: handle, logger }),
+    );
+    const response = await handler(
+      post({ draftId: DRAFT_ID, idempotencyKey: KEY }, { [DEMO_SESSION_COOKIE]: DEMO_HANDLE }),
+    );
+
+    expect(response.status).toBe(200);
+    const allTraces = await traceRepo.all();
+    expect(allTraces.length).toBeGreaterThan(0);
+    expect(allTraces.some((t) => t.toolName === "cart_commit")).toBe(true);
   });
 });

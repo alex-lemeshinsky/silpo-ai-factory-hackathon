@@ -13,6 +13,8 @@ import { NoSavedAddressError } from "@/features/silpo/live/cart-context";
 import { McpCallError } from "@/features/silpo/live/session";
 import { InvalidExternalDataError } from "@/features/silpo/schemas/common";
 
+import { sanitizeTrace, type Logger, type ToolTrace } from "@/lib/logger";
+
 import { createDraftForUser, resolveActiveCity, UNKNOWN_CITY, type CreateDraftDeps } from "./service";
 
 const RUN_AT = new Date("2026-09-08T09:00:00.000Z");
@@ -335,3 +337,72 @@ describe("resolveActiveCity", () => {
       .toBe(UNKNOWN_CITY);
   });
 });
+
+function collectingLogger() {
+  const traces: ToolTrace[] = [];
+  const logger: Logger = {
+    async toolCall(input) {
+      traces.push(sanitizeTrace(input));
+    },
+  };
+  return { logger, traces };
+}
+
+describe("createDraftForUser tracing", () => {
+  it("A17-24 traces every gateway call the run makes, including catalog calls", async () => {
+    const { logger, traces } = collectingLogger();
+    const { deps } = makeDeps({ logger });
+
+    const result = await createDraftForUser(RUN, deps);
+
+    expect(result.ok).toBe(true);
+    const toolNames = new Set(traces.map((entry) => entry.toolName));
+    expect(toolNames.has("listTools")).toBe(true);
+    expect(toolNames.has("loadPurchaseHistory")).toBe(true);
+    // resolveProducts issues this one; a span written by hand in the service
+    // would never see it.
+    expect(toolNames.has("findProducts")).toBe(true);
+  });
+
+  it("A17-25 emits exactly one run trace carrying item count and prediction version", async () => {
+    const { logger, traces } = collectingLogger();
+    const { deps } = makeDeps({ logger });
+
+    const result = await createDraftForUser(RUN, deps);
+    if (!result.ok) throw new Error("expected a draft");
+
+    const runTraces = traces.filter((entry) => entry.toolName === "draft_run");
+    expect(runTraces).toHaveLength(1);
+    expect(runTraces[0]).toMatchObject({
+      mode: "demo",
+      status: "ok",
+      correlationId: "corr-1",
+      predictionVersion: "prediction-v1",
+      metadata: { itemCount: result.value.draft.items.length },
+    });
+  });
+
+  it("A17-26 marks the run trace as an error when the run fails", async () => {
+    const { logger, traces } = collectingLogger();
+    const { deps } = makeDeps({
+      logger,
+      openGateway: async () => { throw new McpCallError("silpo_get_offline_orders", 401, null); },
+    });
+
+    const result = await createDraftForUser(RUN, deps);
+
+    expect(result.ok).toBe(false);
+    const runTraces = traces.filter((entry) => entry.toolName === "draft_run");
+    expect(runTraces).toHaveLength(1);
+    expect(runTraces[0].status).toBe("error");
+  });
+
+  it("A17-27 never lets a logger fault fail the run", async () => {
+    const { deps } = makeDeps({
+      logger: { toolCall: async () => { throw new Error("logger down"); } },
+    });
+
+    await expect(createDraftForUser(RUN, deps)).resolves.toMatchObject({ ok: true });
+  });
+});
+

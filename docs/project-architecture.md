@@ -196,7 +196,9 @@ Demo mode персистує чернетки під синтетичним ко
 
 ### `DiagnosticsService`
 
-Поєднує rolling backtest, product-decision metrics і санітизовані tool traces. Diagnostics route доступний лише в demo mode.
+`buildDiagnostics(userId, deps)` повертає `DiagnosticsReport`: `generatedAt`, `backtest` (`BacktestReport | null`), `decisions` і 20 найновіших demo-traces. Відсутній denominator дає `null`, а не `0`; копію «Недостатньо спостережень» рендерить компонент, а не API. Збій backtest дає `backtest: null`, HTTP 200 і один `error` trace замість 500. Diagnostics route доступний лише в demo mode.
+
+Product-decision метрики рахуються за `draft_items` demo-чернеток цього відвідувача з непорожнім `user_decision`. Заміна зараховується як acceptance. `acceptedReplacementSavings` — це сума `(replaced_from_price − effective price) × quantity` лише для замін, що реально потрапили в кошик, за membership product ID у `VerifiedCart` із `cart_commits.result`. Значення чисте й може бути від'ємним.
 
 Task 6 створює окремий `diagnostics/backtest-service.ts`: application service отримує injected `SilpoGateway`, перевіряє synthetic corpus, нормалізує історію та викликає pure evaluator. `/api/backtest` виконує лише mode gating, composition і HTTP mapping. Task 17 зберігає відповідальність за `diagnostics/service.ts` та загальну diagnostics aggregation. Деталі — у [специфікації Tasks 5–6](./superpowers/specs/2026-09-03-prediction-backtest-design.md#7-task-6-application-requirements).
 
@@ -336,7 +338,9 @@ Removed rows remain decision tombstones but normal draft reads return only activ
 - `draft_items`: resolved product, quantity, price snapshot, reason, user decision, version;
 - `cart_commits`: idempotency key, confirmation timestamp, absolute target quantities, result;
 - `tool_traces`: correlation ID, tool name, mode, duration, retry count, sanitized status;
-- `draft_approvals`: draft, user, idempotency key, approval timestamp.
+- `draft_approvals`: draft, user, idempotency key, approval timestamp;
+- `draft_items.replaced_from_price`: effective ціна позиції, яку перезаписує рішення `replaced`; `null` для інших рішень і для рядків до міграції 0005;
+- `tool_traces.prediction_version`: версія алгоритму прогнозу; окрема колонка, бо `metadata` навмисно не приймає рядків.
 
 Вимоги:
 
@@ -399,18 +403,22 @@ Read-only MCP calls після `429` повторюються не більше 
 
 ## 11. Observability
 
-Кожен draft run отримує correlation ID. Structured trace містить:
+Кожен draft run і кожен cart commit отримує correlation ID. Traces пише `src/lib/logger.ts`; sink — `tool_traces`.
 
-- correlation ID;
-- data mode;
-- tool/service name;
-- duration;
-- retry count;
-- prediction algorithm version;
-- item count;
-- normalized status.
+Санітизація структурна, а не за списком заборонених полів:
 
-У demo mode користувач може відкрити панель «Як працює прогноз» із backtest summary та санітизованими rows `tool / duration / status`. Raw inputs, outputs та user identifiers не відображаються.
+- невідомі ключі відкидаються схемою, тому `authorization`, `phone`, `address`, raw prompts і raw MCP payloads не мають куди потрапити;
+- поля, що лишаються, обмежені патерном або enum: `correlationId`, `toolName`, `mode`, `durationMs`, `retryCount`, `predictionVersion`, `status`;
+- `metadata` приймає лише `number`, `boolean` і `null`, тому текст у ній непредставний;
+- кожне поле має безпечний fallback, тому `sanitizeTrace` тотальна й ніколи не кидає.
+
+`logger.toolCall` ніколи не кидає й не відхиляється: збій sink або console не може завалити draft run чи cart write. Console отримує той самий санітизований запис, що й persistence.
+
+Traces емітує декоратор `withTracedGateway`, застосований у draft- і commit-сервісах одразу після відкриття gateway. Один запис на кожен виклик `SilpoGateway` в обох режимах, включно з catalog-викликами всередині `resolveProducts`. Оригінальний об'єкт помилки прокидається без змін, бо сервіси класифікують збої через `instanceof`.
+
+`retryCount` — це кількість спроб на рівні сервісу: `0` для першого запуску, `1` для повтору commit із тим самим idempotency key. Внутрішні MCP-повтори з `withBoundedRetry` не видимі на рівні gateway і в MVP не публікуються.
+
+У demo mode користувач може відкрити панель «Як працює прогноз» із backtest summary, product-decision метриками та рядками `tool / duration / status`. Raw inputs, outputs, correlation ID, metadata та user identifiers не відображаються. Traces у панелі не скоуповані на користувача: `tool_traces` навмисно не має колонки користувача, і жодне поле санітизованого рядка не відрізняє відвідувачів.
 
 ## 12. Performance budgets
 

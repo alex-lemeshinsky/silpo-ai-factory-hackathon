@@ -125,6 +125,38 @@ main.autopilot-main {
   font-size: var(--autopilot-font-small);
 }
 
+.autopilot-diagnostics {
+  margin-top: var(--autopilot-space-6);
+  padding: var(--autopilot-space-4);
+  border: 1px solid var(--autopilot-border);
+  border-radius: var(--autopilot-radius-lg);
+  background: var(--autopilot-surface);
+}
+
+.autopilot-diagnostics-summary {
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  font-size: var(--autopilot-font-body);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.autopilot-diagnostics-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: var(--autopilot-space-3);
+  margin: 0;
+}
+
+.autopilot-diagnostics-metric dt { color: var(--autopilot-muted); font-size: var(--autopilot-font-label); }
+.autopilot-diagnostics-metric dd { margin: 0; font-size: var(--autopilot-font-small); font-variant-numeric: tabular-nums; }
+
+.autopilot-diagnostics-traces { width: 100%; border-collapse: collapse; font-size: var(--autopilot-font-small); }
+.autopilot-diagnostics-traces caption { text-align: left; color: var(--autopilot-muted); font-size: var(--autopilot-font-label); }
+.autopilot-diagnostics-traces th { text-align: left; }
+.autopilot-diagnostics-traces td, .autopilot-diagnostics-traces th { padding: var(--autopilot-space-2) 0; border-bottom: 1px solid var(--autopilot-border); }
+
 .autopilot-status {
   padding: var(--autopilot-space-4);
   border-radius: var(--autopilot-radius-lg);

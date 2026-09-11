@@ -23,6 +23,7 @@ import type {
 import type { SilpoGatewayHandle } from "@/features/silpo/gateway";
 import { MissingCartBranchError } from "@/features/silpo/live/cart";
 import { McpCallError } from "@/features/silpo/live/session";
+import { sanitizeTrace, type Logger, type ToolTrace } from "@/lib/logger";
 
 const USER = "00000000-0000-4000-8000-000000000001";
 const DRAFT_ID = "00000000-0000-4000-8000-000000000016";
@@ -172,6 +173,43 @@ function runCommit(
     { draftId: DRAFT_ID, userId: USER, idempotencyKey: KEY, correlationId: "c1", ...overrides },
     { drafts: deps.drafts, commits: deps.commits, openGateway: async () => deps.handle },
   );
+}
+
+async function verifiedCommitScenario() {
+  const drafts = createInMemoryDraftRepository();
+  await setupApprovedDraft(drafts, confirmingDraft, KEY);
+  const commits = createInMemoryCartCommitRepository();
+
+  const emptyCart = cartAfterWrite({ items: [], total: 0 });
+  const fullCart = cartAfterWrite({
+    items: [{ productId: "p-1", quantity: 2, unitPrice: 24.9, available: true }],
+    total: 49.8,
+  });
+  const { handle, gateway } = makeGateway({
+    readCart: vi.fn().mockResolvedValueOnce(emptyCart).mockResolvedValueOnce(fullCart),
+  });
+  const input: CommitApprovedDraftInput = {
+    draftId: DRAFT_ID,
+    userId: USER,
+    idempotencyKey: KEY,
+    correlationId: "c1",
+  };
+  const deps = {
+    drafts,
+    commits,
+    openGateway: async () => handle,
+  };
+  return { input, deps, drafts, commits, handle, gateway };
+}
+
+function collectingLogger() {
+  const traces: ToolTrace[] = [];
+  const logger: Logger = {
+    async toolCall(input) {
+      traces.push(sanitizeTrace(input));
+    },
+  };
+  return { logger, traces };
 }
 
 describe("commitApprovedDraft", () => {
@@ -808,19 +846,8 @@ describe("commitApprovedDraft", () => {
   });
 
   it("T16-14 returns checkout links and records the draft outcome for a clean commit", async () => {
-    const drafts = createInMemoryDraftRepository();
-    await setupApprovedDraft(drafts, confirmingDraft, KEY);
-    const commits = createInMemoryCartCommitRepository();
-
-    const emptyCart = cartAfterWrite({ items: [], total: 0 });
-    const fullCart = cartAfterWrite({
-      items: [{ productId: "p-1", quantity: 2, unitPrice: 24.9, available: true }],
-      total: 49.8,
-    });
-    const { handle } = makeGateway({
-      readCart: vi.fn().mockResolvedValueOnce(emptyCart).mockResolvedValueOnce(fullCart),
-    });
-    const result = await runCommit({ drafts, commits, handle });
+    const { input, deps, drafts } = await verifiedCommitScenario();
+    const result = await commitApprovedDraft(input, deps);
 
     if (!result.ok) throw new Error("expected success");
     expect(result.value.status).toBe("verified");
@@ -899,3 +926,112 @@ describe("commitApprovedDraft", () => {
     expect(demoResult.value.validations).toEqual(liveResult.value.validations);
   });
 });
+
+describe("commitApprovedDraft tracing", () => {
+  it("A17-28 emits one commit trace whose status follows the terminal outcome", async () => {
+    const { logger, traces } = collectingLogger();
+    const scenario = await verifiedCommitScenario();
+
+    const result = await commitApprovedDraft(scenario.input, { ...scenario.deps, logger });
+
+    expect(result.ok).toBe(true);
+    const runTraces = traces.filter((entry) => entry.toolName === "cart_commit");
+    expect(runTraces).toHaveLength(1);
+    expect(runTraces[0]).toMatchObject({ status: "ok", retryCount: 0 });
+  });
+
+  it("A17-29 reports a retry as attempt one", async () => {
+    const { logger, traces } = collectingLogger();
+    const scenario = await verifiedCommitScenario();
+
+    await commitApprovedDraft(scenario.input, { ...scenario.deps, logger });
+    await commitApprovedDraft(scenario.input, { ...scenario.deps, logger });
+
+    const runTraces = traces.filter((entry) => entry.toolName === "cart_commit");
+    expect(runTraces.map((entry) => entry.retryCount)).toEqual([0, 1]);
+  });
+
+  it("A17-30 traces the cart write itself", async () => {
+    const { logger, traces } = collectingLogger();
+    const scenario = await verifiedCommitScenario();
+
+    await commitApprovedDraft(scenario.input, { ...scenario.deps, logger });
+
+    expect(traces.map((entry) => entry.toolName)).toContain("setAbsoluteCartQuantities");
+  });
+
+  it("emits status: 'blocked' on a blocked commit", async () => {
+    const { logger, traces } = collectingLogger();
+    const scenario = await verifiedCommitScenario();
+    scenario.gateway.findProducts = vi.fn(async (_c, queries: string[]) =>
+      queries.map((query) => ({ query, products: [] })),
+    );
+
+    const result = await commitApprovedDraft(scenario.input, { ...scenario.deps, logger });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected success");
+    expect(result.value.status).toBe("blocked");
+    const runTraces = traces.filter((entry) => entry.toolName === "cart_commit");
+    expect(runTraces).toHaveLength(1);
+    expect(runTraces[0]).toMatchObject({ status: "blocked" });
+  });
+
+  it("emits status: 'blocked' on replaying a stored blocked commit", async () => {
+    const { logger, traces } = collectingLogger();
+    const scenario = await verifiedCommitScenario();
+    await scenario.commits.start({
+      key: scenario.input.idempotencyKey,
+      targetQuantities: { "p-1": 2 },
+      userId: scenario.input.userId,
+      draftId: scenario.input.draftId,
+      confirmationTimestamp: new Date(),
+    });
+    const blockedCart = cartAfterWrite({ status: "blocked", checkoutLinks: null });
+    await scenario.commits.saveResult(scenario.input.idempotencyKey, {
+      status: "blocked",
+      data: { cart: blockedCart },
+    });
+
+    const result = await commitApprovedDraft(scenario.input, { ...scenario.deps, logger });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected success");
+    expect(result.value.status).toBe("blocked");
+    const runTraces = traces.filter((entry) => entry.toolName === "cart_commit");
+    expect(runTraces).toHaveLength(1);
+    expect(runTraces[0]).toMatchObject({ status: "blocked", retryCount: 1 });
+  });
+
+  it("emits status: 'error' on commit failure", async () => {
+    const { logger, traces } = collectingLogger();
+    const scenario = await verifiedCommitScenario();
+    scenario.gateway.loadCartContext = vi.fn(async () => {
+      throw new McpCallError("silpo_get_shopping_cart", 500, null);
+    });
+
+    const result = await commitApprovedDraft(scenario.input, { ...scenario.deps, logger });
+
+    expect(result.ok).toBe(false);
+    const runTraces = traces.filter((entry) => entry.toolName === "cart_commit");
+    expect(runTraces).toHaveLength(1);
+    expect(runTraces[0]).toMatchObject({ status: "error" });
+  });
+
+  it("never lets a logger fault fail the commit", async () => {
+    const scenario = await verifiedCommitScenario();
+    const throwingLogger: Logger = {
+      toolCall: async () => {
+        throw new Error("logger down");
+      },
+    };
+
+    const result = await commitApprovedDraft(scenario.input, {
+      ...scenario.deps,
+      logger: throwingLogger,
+    });
+
+    expect(result.ok).toBe(true);
+  });
+});
+

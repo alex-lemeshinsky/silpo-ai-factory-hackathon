@@ -2,6 +2,7 @@ import { eq } from "drizzle-orm";
 import { z } from "zod";
 import type { DbClient } from "@/db/client";
 import { cartCommits } from "@/db/schema";
+import { VerifiedCartSchema } from "@/features/shared/contracts";
 import { CommitAdjustmentSchema, type CommitAdjustment } from "./plan";
 
 export type CartCommitStatus = "pending" | "partially_committed" | "verified" | "blocked";
@@ -65,6 +66,12 @@ export const PlannedCartCommitSchema = z.object({
   phase: z.literal("planned"),
   adjustments: z.array(CommitAdjustmentSchema),
 }).strict();
+
+/** The shape `saveResult` persists into `cart_commits.result`. */
+export const StoredCommitResultSchema = z.object({
+  status: z.enum(["verified", "partially_committed", "blocked"]),
+  data: z.object({ cart: VerifiedCartSchema }),
+});
 
 const storedCartCommitResultSchema = z.union([
   savedCartCommitResultSchema,

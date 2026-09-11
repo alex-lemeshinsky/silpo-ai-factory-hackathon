@@ -2,7 +2,7 @@ import { getTableColumns } from "drizzle-orm";
 import { getTableConfig } from "drizzle-orm/pg-core";
 import { describe, expect, it } from "vitest";
 
-import { authSessions, draftItems, mcpConnections, silpoOAuthStates } from "./schema";
+import { authSessions, draftItems, mcpConnections, silpoOAuthStates, toolTraces } from "./schema";
 
 describe("mcpConnections schema", () => {
   it("stores AES-GCM ciphertext, IV, and authentication tag separately", () => {
@@ -86,5 +86,23 @@ describe("silpoOAuthStates schema", () => {
     expect(checks).toContain("silpo_oauth_states_phase_check");
     expect(checks).toContain("silpo_oauth_states_version_check");
     expect(checks).toContain("silpo_oauth_states_active_flow_check");
+  });
+});
+
+describe("diagnostics schema additions", () => {
+  it("A17-01 keeps the price a replacement decision would otherwise destroy", () => {
+    const columns = getTableColumns(draftItems);
+
+    expect(columns.replacedFromPrice.name).toBe("replaced_from_price");
+    // Nullable: rows approved before this migration have no recoverable price,
+    // and a backfilled value would corrupt the savings metric.
+    expect(columns.replacedFromPrice.notNull).toBe(false);
+  });
+
+  it("A17-02 gives a trace a typed home for the prediction version", () => {
+    const columns = getTableColumns(toolTraces);
+
+    expect(columns.predictionVersion.name).toBe("prediction_version");
+    expect(columns.predictionVersion.notNull).toBe(false);
   });
 });

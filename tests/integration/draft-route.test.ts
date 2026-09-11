@@ -8,10 +8,12 @@ import {
   isDemoHandle,
 } from "@/features/drafts/demo-user";
 import { createInMemoryDraftRepository } from "@/features/drafts/repository";
+import { createInMemoryToolTraceRepository } from "@/features/diagnostics/trace-repository";
 import { createDemoSilpoGateway } from "@/features/silpo/demo/demo-gateway";
 import { McpCallError } from "@/features/silpo/live/session";
 import { InvalidExternalDataError } from "@/features/silpo/schemas/common";
 import type { ServerEnv } from "@/lib/env";
+import { createLogger, createNoopLogger } from "@/lib/logger";
 import { err, ok } from "@/lib/result";
 
 import { createDraftsPostHandler, type DraftsHandlerDeps } from "@/app/api/drafts/handlers";
@@ -41,6 +43,7 @@ function makeDeps(overrides: Partial<DraftsHandlerDeps> = {}): DraftsHandlerDeps
         ? { userId: demoUserIdFor(cookieValue), handle: cookieValue, issued: false }
         : { userId: demoUserIdFor(DEMO_HANDLE), handle: DEMO_HANDLE, issued: true },
     repository: () => repository,
+    logger: () => createNoopLogger(),
     openGateway: async () => ({ gateway: createDemoSilpoGateway(), async close() {} }),
     generateDraft: async (input) => ({
       proposal: buildFallbackProposal(input),
@@ -257,5 +260,22 @@ describe("POST /api/drafts", () => {
     expect(response.status).toBe(500);
     expect(payload.error.code).toBe("unexpected");
     expect(JSON.stringify(payload)).not.toContain("DATABASE_URL");
+  });
+
+  it("injects the configured logger into createDraftForUser so traces are recorded", async () => {
+    const traceRepo = createInMemoryToolTraceRepository();
+    const logger = createLogger({ sink: traceRepo });
+    const handler = createDraftsPostHandler(
+      makeDeps({
+        logger: () => logger,
+      }),
+    );
+
+    const response = await handler(post());
+    expect(response.status).toBe(200);
+
+    const allTraces = await traceRepo.all();
+    expect(allTraces.length).toBeGreaterThan(0);
+    expect(allTraces.some((t) => t.toolName === "draft_run")).toBe(true);
   });
 });
